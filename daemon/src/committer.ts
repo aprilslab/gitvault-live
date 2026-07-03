@@ -8,12 +8,16 @@ const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
 const DEVICE_ID_FILE = 'ogs-device-id'; // .git/ 하위 — 동기화되지 않고 기기 고정
 const SYNC_INTERVAL_MS = 60_000;
 const GIT_BLOCK_TIMEOUT_MS = 20_000; // git op 이 이 시간 동안 무출력이면 중단(hung fetch 방지)
+const PUSH_RETRIES = 3;
 
 /**
- * vault git repo 를 다루는 데몬 코어.
- * - 변경 디바운스 → wip/<device> 커밋·푸시
- * - idle → main 자동 저장(squash, plumbing)
- * - 주기 sync-down (origin/main → wip 병합)
+ * 에이전트(헤드리스) vault git 클라이언트.
+ * - 변경 디바운스 → 로컬 main 커밋 → origin/main union 병합 → push main (경합 시 재시도)
+ * - 주기 sync-down (origin/main → 로컬 main 병합; 유휴 시 타 참여자 변경 수신)
+ *
+ * SoT = 표준 호스팅 git repo (HTTPS 토큰). 특수 서버·wip 브랜치·idle-squash 없음 —
+ * 에이전트는 "저장 버튼" 주체가 없으므로 매 배치를 main 에 직접 연속 전진시킨다.
+ * 헤드리스라 열린 에디터가 없어 로컬 main 체크아웃/merge 가 안전하다.
  * 모든 git op 는 PromiseQueue 로 직렬화된다.
  */
 export class Committer {
@@ -21,10 +25,8 @@ export class Committer {
   private readonly queue = new PromiseQueue();
 
   private deviceId = '';
-  private wipRef = '';
 
   private commitTimer?: NodeJS.Timeout;
-  private idleTimer?: NodeJS.Timeout;
   private syncTimer?: NodeJS.Timeout;
   private stopped = false;
 
@@ -32,41 +34,31 @@ export class Committer {
     this.git = simpleGit(cfg.vaultPath, { timeout: { block: GIT_BLOCK_TIMEOUT_MS } });
   }
 
-  /** repo 보장 → 초기 sync-down(offline 허용) → 타이머 기동. */
+  /** repo 보장 → 초기 push(adopt/seed 를 main 에 반영, offline 허용) → 주기 sync 기동. */
   async start(): Promise<void> {
     await this.ensureRepo();
-    await this.syncDown().catch(logErr('initial-sync')); // offline 이어도 감시는 계속되게
+    await this.commitAndPush().catch(logErr('initial-push')); // offline 이어도 감시는 계속되게
     this.scheduleSync();
-    this.resetIdleTimer();
   }
 
   /** 종료/테스트용: 모든 타이머 해제. */
   stop(): void {
     this.stopped = true;
-    for (const t of [this.commitTimer, this.idleTimer, this.syncTimer]) if (t) clearTimeout(t);
+    for (const t of [this.commitTimer, this.syncTimer]) if (t) clearTimeout(t);
   }
 
-  /** watcher 가 호출. 디바운스 후 커밋·푸시. 매 변경마다 idle 타이머 갱신. */
+  /** watcher 가 호출. 디바운스 후 커밋·푸시. */
   onChange(): void {
-    this.resetIdleTimer();
     if (this.commitTimer) clearTimeout(this.commitTimer);
     this.commitTimer = setTimeout(() => void this.commitAndPush().catch(logErr('commit-push')), this.cfg.debounceMs);
   }
 
-  /** wip/<device> 로 커밋·푸시 (직렬화). 테스트에서 직접 호출 가능. */
-  commitAndPush(): Promise<void> {
-    return this.queue.add(async () => {
-      await this.flushCommit();
-      await this.pushWip();
-    });
+  /** 로컬 main 커밋 → origin/main 병합 → push main. 경합 시 fetch 부터 재시도(직렬화). */
+  commitAndPush(): Promise<'pushed' | 'nochange'> {
+    return this.queue.add(() => this.pushMainLocked());
   }
 
-  /** 공용 저장 시퀀스: sync-down 후 merged tree 를 origin/main 위 1커밋으로 push (checkout 없음). */
-  save(): Promise<'saved' | 'nochange'> {
-    return this.queue.add(() => this.saveLocked());
-  }
-
-  /** 주기 sync-down (직렬화). */
+  /** 주기 sync-down: origin/main 을 로컬 main 으로 병합(직렬화). */
   syncDown(): Promise<void> {
     return this.queue.add(async () => {
       await this.flushCommit();
@@ -98,54 +90,71 @@ export class Committer {
       await this.git.raw(['remote', 'add', 'origin', this.cfg.remote]);
     }
     await this.git.fetch(['origin', '--prune']).catch(() => undefined);
-    await this.ensureWipBranch();
+    await this.ensureMainBranch();
   }
 
-  /** DEVICE_ID env > .git/ogs-device-id 영속값 > 신규 생성(영속화). 재시작 시 동일 wip 유지. */
+  /** DEVICE_ID env > .git/ogs-device-id 영속값 > 신규 생성(영속화). 재시작 시 동일 identity 유지. */
   private resolveDeviceId(): void {
     if (this.cfg.deviceId) {
       this.deviceId = this.cfg.deviceId;
-    } else {
-      const idFile = join(this.cfg.vaultPath, '.git', DEVICE_ID_FILE);
-      let id = '';
-      try {
-        id = readFileSync(idFile, 'utf8').trim();
-      } catch {
-        /* 없으면 생성 */
-      }
-      if (!id) {
-        id = defaultDeviceId();
-        try {
-          writeFileSync(idFile, `${id}\n`);
-        } catch (e) {
-          logErr('device-id-persist')(e);
-        }
-      }
-      this.deviceId = id;
+      return;
     }
-    this.wipRef = `wip/${this.deviceId}`;
+    const idFile = join(this.cfg.vaultPath, '.git', DEVICE_ID_FILE);
+    let id = '';
+    try {
+      id = readFileSync(idFile, 'utf8').trim();
+    } catch {
+      /* 없으면 생성 */
+    }
+    if (!id) {
+      id = defaultDeviceId();
+      try {
+        writeFileSync(idFile, `${id}\n`);
+      } catch (e) {
+        logErr('device-id-persist')(e);
+      }
+    }
+    this.deviceId = id;
   }
 
-  private async ensureWipBranch(): Promise<void> {
+  /** 로컬 main 확보. 원격 main 있으면 워킹트리 파괴 없이 흡수(adopt), 없으면 seed. */
+  private async ensureMainBranch(): Promise<void> {
     const local = await this.git.branchLocal().catch(() => ({ all: [] as string[] }));
-    if (local.all.includes(this.wipRef)) {
-      await this.git.raw(['checkout', this.wipRef]);
+    if (local.all.includes('main')) {
+      await this.git.raw(['checkout', 'main']);
       return;
     }
     if (await this.refExists('refs/remotes/origin/main')) {
-      // origin/main 위에 wip 을 만들되 워킹트리를 덮지 않는다.
+      // origin/main 위에 로컬 main 을 만들되 워킹트리를 덮지 않는다.
       // (checkout -B origin/main 은 untracked 로컬 파일과 충돌 시 abort → 기존 vault 온보딩 크래시.)
       // 로컬 파일은 index 에 흡수하고, 원격 전용 파일만 워킹트리로 실체화한다.
-      await this.git.raw(['branch', '-f', this.wipRef, 'origin/main']);
-      await this.git.raw(['symbolic-ref', 'HEAD', `refs/heads/${this.wipRef}`]);
+      await this.git.raw(['branch', '-f', 'main', 'origin/main']);
+      await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
       await this.git.raw(['reset', '--mixed']); // index=origin/main, 워킹트리 보존
       await this.git.raw(['add', '--ignore-removal', '--', '.']); // 로컬 추가/수정 stage(원격전용 삭제 안 함)
       const status = await this.git.raw(['status', '--porcelain']);
       if (status.trim()) await this.git.commit(`adopt: ${nowIso()}`);
       await this.git.raw(['checkout-index', '-a']); // index→워킹트리 실체화(기존 파일은 미덮어씀)
     } else {
-      // 원격이 비었으면 현재 워킹트리로 첫 wip.
-      await this.git.raw(['checkout', '-B', this.wipRef]);
+      // 원격이 비었으면 현재 워킹트리 + seed 파일로 첫 main.
+      await this.git.raw(['checkout', '-B', 'main']);
+      this.seedRepoFiles();
+    }
+  }
+
+  /** 빈 원격 seed: .gitattributes(union) + .gitignore 를 워킹트리에 둔다(첫 커밋에 흡수됨). 기존 파일은 존중. */
+  private seedRepoFiles(): void {
+    const attrs = join(this.cfg.vaultPath, '.gitattributes');
+    const ignore = join(this.cfg.vaultPath, '.gitignore');
+    try {
+      writeFileSync(attrs, '*.md merge=union\n* text=auto eol=lf\n', { flag: 'wx' });
+    } catch {
+      /* 이미 있으면 존중 */
+    }
+    try {
+      writeFileSync(ignore, '.obsidian/\n.DS_Store\nThumbs.db\n', { flag: 'wx' });
+    } catch {
+      /* 존중 */
     }
   }
 
@@ -157,19 +166,31 @@ export class Committer {
     await this.git.commit(`${this.deviceId}: ${nowIso()}`);
   }
 
-  private async pushWip(): Promise<void> {
-    const spec = `HEAD:refs/heads/${this.wipRef}`;
-    try {
-      // 평시(디바운스 커밋)엔 fast-forward.
-      await this.git.raw(['push', 'origin', spec]);
-    } catch {
-      // 저장 후 reset --soft 한 wip 은 원격과 sibling(비-ff) — 이땐 force-with-lease 로 재정렬.
-      // 단일 작성자 전제라 lease 가 어긋나면(타 작성자) 시끄럽게 실패하는 게 옳다.
-      await this.git.raw(['push', '--force-with-lease', 'origin', spec]);
+  /** 로컬 main 을 origin/main 위로 병합 후 push. 경합(non-ff) 시 fetch 부터 재시도. */
+  private async pushMainLocked(): Promise<'pushed' | 'nochange'> {
+    await this.flushCommit();
+    for (let attempt = 0; attempt < PUSH_RETRIES; attempt++) {
+      await this.git.fetch(['origin', '--prune']).catch(() => undefined);
+      await this.mergeDown();
+
+      const head = (await this.git.raw(['rev-parse', 'HEAD'])).trim();
+      const originMain = (await this.refExists('refs/remotes/origin/main'))
+        ? (await this.git.raw(['rev-parse', 'origin/main'])).trim()
+        : null;
+      if (head === originMain) return 'nochange'; // 로컬에 새 내용 없음 → 빈 push 방지
+
+      try {
+        await this.git.raw(['push', 'origin', 'HEAD:refs/heads/main']);
+        return 'pushed';
+      } catch (e) {
+        if (attempt === PUSH_RETRIES - 1) throw e;
+        await sleep(100 + Math.floor(Math.random() * 400)); // jitter 후 fetch 부터 재시도
+      }
     }
+    return 'nochange';
   }
 
-  /** origin/main 을 wip 로 병합. .md 는 union, 그 외 -X theirs. 잔여 충돌은 폴백. */
+  /** origin/main 을 현재 브랜치로 병합. .md 는 union, 그 외 -X theirs. 잔여 충돌은 폴백. */
   private async mergeDown(): Promise<void> {
     if (!(await this.refExists('refs/remotes/origin/main'))) return;
     try {
@@ -202,44 +223,12 @@ export class Committer {
     await this.git.commit(`sync-down: ${nowIso()}`);
   }
 
-  private async saveLocked(): Promise<'saved' | 'nochange'> {
-    await this.flushCommit();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await this.git.fetch(['origin', '--prune']);
-      await this.mergeDown();
-
-      const tree = (await this.git.raw(['rev-parse', 'HEAD^{tree}'])).trim();
-      const mainTree = await this.originMainTree();
-      if (tree === mainTree) return 'nochange';
-
-      const parent = (await this.refExists('refs/remotes/origin/main')) ? ['-p', 'origin/main'] : [];
-      const msg = `저장: ${this.deviceId} ${nowIso()}`;
-      const commit = (await this.git.raw(['commit-tree', tree, ...parent, '-m', msg])).trim();
-
-      try {
-        await this.git.raw(['push', 'origin', `${commit}:refs/heads/main`]);
-      } catch (e) {
-        if (attempt === 2) throw e;
-        await sleep(100 + Math.floor(Math.random() * 400)); // jitter 후 fetch 부터 재시도
-        continue;
-      }
-
-      await this.git.raw(['reset', '--soft', commit]); // wip 포인터만 이동, 워킹트리·mtime 무변경
-      await this.pushWip();
-      return 'saved';
-    }
-    return 'nochange';
-  }
-
-  private async originMainTree(): Promise<string | null> {
-    if (!(await this.refExists('refs/remotes/origin/main'))) return null;
-    return (await this.git.raw(['rev-parse', 'origin/main^{tree}'])).trim();
-  }
-
   private async refExists(ref: string): Promise<boolean> {
     try {
-      await this.git.raw(['rev-parse', '--verify', '--quiet', ref]);
-      return true;
+      // simple-git 은 `--quiet` 로 exit 1 이어도 throw 하지 않고 빈 문자열을 resolve 한다 →
+      // 존재 판정은 출력(sha) 유무로 해야 한다. (throw 케이스도 대비해 try/catch 유지.)
+      const out = await this.git.raw(['rev-parse', '--verify', '--quiet', ref]);
+      return out.trim().length > 0;
     } catch {
       return false;
     }
@@ -254,11 +243,6 @@ export class Committer {
           if (!this.stopped) this.scheduleSync();
         });
     }, SYNC_INTERVAL_MS);
-  }
-
-  private resetIdleTimer(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => void this.save().catch(logErr('idle-save')), this.cfg.autosaveIdleMs);
   }
 }
 

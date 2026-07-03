@@ -18,7 +18,7 @@
 ## Queue
 
 ### 1. daemon — hermes 감시 데몬 (PLAN Phase 1)
-- status: pending
+- status: done (commit ffae3f9)
 - depends: 없음 (Phase 0 완료)
 - scope (firm v1): `daemon/{package.json,tsconfig.json}`, `daemon/src/{config,watcher,committer,index}.ts`. watcher=chokidar v4(`ignoreInitial`, `ignored:/\.git/`, `awaitWriteFinish{2000,100}`). committer=repo-local identity 자동설정 + debounce 3s + `add -A` + `status --porcelain` empty-skip + `commit` + `push wip/<device>` + idle(`AUTOSAVE_IDLE_MS` 기본 5m)→공용 저장 시퀀스(`commit-tree -p origin/main` + `reset --soft` + `push --force-with-lease`) + 60s sync-down(`merge -X theirs`, `GIT_MERGE_AUTOEDIT=no`) + PromiseQueue 직렬화. esbuild 단일파일 번들 스크립트(`dist/index.js`).
 - 자른 것: systemd 실제 등록·hermes 배포·실 접속(외부/실행).
@@ -58,3 +58,4 @@
 
 ## Progress log
 - (iteration마다 1줄: `YYYY-MM-DD <slug> done @<hash>` 또는 `blocker: …`)
+- 2026-07-03 daemon done @ffae3f9 — build+typecheck+smoke(14 assert) 통과. 적대적 리뷰 워크플로우로 6버그(3 HIGH: 온보딩 크래시/한글 quotePath/deviceId 영속, 2 MED: offline start/env검증, 1 LOW: sync overlap) 확인·수정.

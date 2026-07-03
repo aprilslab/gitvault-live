@@ -2,7 +2,7 @@
   "name": "obsidian-git-sync-daemon",
   "version": "0.1.0",
   "private": true,
-  "description": "hermes vault watcher daemon — auto commit/push, idle save, sync-down.",
+  "description": "에이전트(헤드리스) vault git 클라이언트 — 변경 감시 → main 연속 commit/push, sync-down.",
   "main": "dist/index.js",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --external:fsevents",

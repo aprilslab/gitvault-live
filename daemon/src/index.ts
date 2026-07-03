@@ -5,8 +5,8 @@ import { startWatcher } from './watcher';
 async function main(): Promise<void> {
   const cfg = loadConfig();
   console.log(
-    `[obsidian-git-sync] 데몬 시작 device=${cfg.deviceId} vault=${cfg.vaultPath} ` +
-      `debounce=${cfg.debounceMs}ms idle=${cfg.autosaveIdleMs}ms`,
+    `[obsidian-git-sync] 에이전트 git 클라이언트 시작 device=${cfg.deviceId ?? '(auto)'} ` +
+      `vault=${cfg.vaultPath} debounce=${cfg.debounceMs}ms → push origin main`,
   );
 
   const committer = new Committer(cfg);
