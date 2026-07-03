@@ -299,6 +299,7 @@ export default class GitSyncPlugin extends Plugin {
     const cm = editorViewOf(view);
     if (!cm) return; // 리딩 모드 등 — 무시
     if (!this.settings.showLineBlame) {
+      this.lastBlameKey.set(cm, '[]');
       pushBlame(cm, []); // 꺼졌으면 거터 비움
       return;
     }
