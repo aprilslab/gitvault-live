@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, FileSystemAdapter, TFile, Notice, Platform } from 'obsidian';
+import { Plugin, MarkdownView, FileSystemAdapter, TFile, Notice, Platform, debounce } from 'obsidian';
 import type { EditorView } from '@codemirror/view';
 import {
   OgsSettings,
@@ -13,9 +13,10 @@ import { StatusBar } from './ui/StatusBar';
 import { DiffPanel, VIEW_TYPE_OGS_DIFF } from './ui/DiffPanel';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
 import { saveKeymap } from './editor/saveKeymap';
-import { parseUnifiedHunks } from './editor/diffHunks';
+import { diffLines } from './editor/lineDiff';
 
 const COMMIT_DEBOUNCE_MS = 3_000;
+const DECO_DEBOUNCE_MS = 300; // 타이핑 → 인라인 데코 갱신 지연 (키입력마다가 아닌 잠깐 멈출 때)
 
 export default class GitSyncPlugin extends Plugin {
   settings!: OgsSettings;
@@ -26,6 +27,12 @@ export default class GitSyncPlugin extends Plugin {
   private saveNotice?: Notice;
   private publishing = false;
   private applyChain: Promise<void> = Promise.resolve();
+  /** path → origin/main 파일 내용(없으면 null). fetch/커밋/저장 후(refreshCollab) 무효화. */
+  private readonly mainCache = new Map<string, string | null>();
+  /** 에디터별 마지막 hunk 직렬화 키 — 불변이면 dispatch/데코 재빌드 생략. */
+  private readonly lastHunksKey = new WeakMap<EditorView, string>();
+  /** 타이핑 중 데코 갱신 디바운서 (editor-change 마다 타이머 리셋). */
+  private readonly decoDebounce = debounce(() => void this.refreshActiveDecorations(), DECO_DEBOUNCE_MS, true);
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -72,6 +79,8 @@ export default class GitSyncPlugin extends Plugin {
     // 안 뜨므로 file-open 도 함께 등록 — 안 그러면 이전 파일 데코가 새 문서에 남는다.
     this.registerEvent(this.app.workspace.on('active-leaf-change', () => void this.refreshActiveDecorations()));
     this.registerEvent(this.app.workspace.on('file-open', () => void this.refreshActiveDecorations()));
+    // 타이핑(엔터 포함)에 즉시 반응 — 버퍼 기준 인메모리 diff 라 디스크 저장을 기다리지 않는다.
+    this.registerEvent(this.app.workspace.on('editor-change', () => this.decoDebounce()));
 
     // 시작 커밋 폭주 방지: 레이아웃 준비 후에 감시 시작.
     this.app.workspace.onLayoutReady(() => void this.applySettings());
@@ -148,6 +157,7 @@ export default class GitSyncPlugin extends Plugin {
 
   /** 패널 + 활성 에디터 데코레이션 + "저장 대기 N" 상태바를 함께 갱신 (sync/커밋/저장 시). */
   private async refreshCollab(): Promise<void> {
+    this.mainCache.clear(); // origin/main 이 움직였을 수 있는 시점 — 데코 diff 기준 무효화
     this.refreshPanels();
     await this.refreshActiveDecorations();
     await this.updatePublishStatus();
@@ -184,7 +194,11 @@ export default class GitSyncPlugin extends Plugin {
     }
   }
 
-  /** 활성 markdown 노트의 origin/main 대비 hunk 를 계산해 CM6 데코레이션으로 반영(설정 켜졌을 때만). */
+  /**
+   * 활성 markdown 노트의 origin/main 대비 hunk 를 CM6 데코레이션으로 반영(설정 켜졌을 때만).
+   * 에디터 버퍼를 직접 인메모리 diff — 디스크 저장/git 프로세스에 의존하지 않아 타이핑에 즉시 반응.
+   * origin/main 내용은 mainCache 에 캐시(sync 시점 무효화) → 키입력 빈도 갱신은 git spawn 0회.
+   */
   private async refreshActiveDecorations(): Promise<void> {
     if (!this.git) return;
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -195,9 +209,19 @@ export default class GitSyncPlugin extends Plugin {
       pushHunks(cm, []); // 꺼졌으면 남은 데코 제거
       return;
     }
+    const path = view.file.path;
     try {
-      const diff = await this.git.fileDiffVsMain(view.file.path);
-      pushHunks(cm, parseUnifiedHunks(diff));
+      let base = this.mainCache.get(path);
+      if (base === undefined) {
+        base = await this.git.mainFileContent(path);
+        this.mainCache.set(path, base);
+      }
+      // origin/main 에 없는 신규 노트는 데코 없음 — outgoing 표시는 저장 배지/패널 담당.
+      const hunks = base === null ? [] : diffLines(base, cm.state.doc.toString());
+      const key = JSON.stringify(hunks);
+      if (this.lastHunksKey.get(cm) === key) return; // 불변 — dispatch/재빌드 생략
+      this.lastHunksKey.set(cm, key);
+      pushHunks(cm, hunks);
     } catch {
       /* 일시 오류 — 데코레이션 갱신만 건너뜀 */
     }

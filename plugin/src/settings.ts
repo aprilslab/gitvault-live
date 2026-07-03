@@ -14,7 +14,7 @@ export interface OgsSettings {
   deviceId: string;
   /** 자동 fetch/sync 주기(초). */
   autoSyncSeconds: number;
-  /** 에디터 본문에 변경 라인 인라인 하이라이트 표시(기본 끔 — 파일마다 diff 계산이라 느릴 수 있음). */
+  /** 에디터 본문에 변경 라인 인라인 하이라이트 표시(에디터 버퍼 기준 인메모리 diff — 타이핑 즉시 반영). */
   showInlineChanges: boolean;
 }
 
@@ -150,7 +150,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('변경 라인 인라인 표시 (실험적)')
-      .setDesc('공식본(main)과 다른 라인을 에디터 본문에 파란색으로 표시. 파일마다 git diff 를 돌려 느릴 수 있어 기본 꺼짐.')
+      .setDesc('공식본(main)과 다른 라인을 에디터 본문에 파란색으로 표시. 타이핑에 즉시 반응(인메모리 diff).')
       .addToggle((t) =>
         t.setValue(s.showInlineChanges).onChange(async (v) => {
           s.showInlineChanges = v;
