@@ -22,6 +22,7 @@ export interface AutoSyncOptions {
  */
 export class AutoSync {
   private readonly refs: EventRef[] = [];
+  private readonly wsRefs: EventRef[] = []; // workspace 이벤트 — offref 대상 emitter 가 vault 와 다름
   private commitTimer = 0;
   private syncTimer = 0;
   private lastKeystroke = 0;
@@ -37,6 +38,13 @@ export class AutoSync {
     this.refs.push(vault.on('create', onChange));
     this.refs.push(vault.on('delete', onChange));
     this.refs.push(vault.on('rename', onChange));
+    // vault modify 는 Obsidian autosave(~2s) 뒤에야 발화 — idle 판정용 키입력 추적은
+    // editor-change(실제 타이핑 즉시)로 별도 갱신해야 merge 연기 판정이 정확하다.
+    this.wsRefs.push(
+      this.opts.app.workspace.on('editor-change', () => {
+        this.lastKeystroke = Date.now();
+      }),
+    );
     this.scheduleSync();
   }
 
@@ -44,6 +52,8 @@ export class AutoSync {
     this.stopped = true;
     for (const r of this.refs) this.opts.app.vault.offref(r);
     this.refs.length = 0;
+    for (const r of this.wsRefs) this.opts.app.workspace.offref(r);
+    this.wsRefs.length = 0;
     if (this.commitTimer) window.clearTimeout(this.commitTimer);
     if (this.syncTimer) window.clearTimeout(this.syncTimer);
   }
@@ -75,10 +85,12 @@ export class AutoSync {
     }, this.opts.syncSeconds * 1_000);
   }
 
+  /** merge 직전(느린 fetch 이후)에도 GitManager 가 재평가할 수 있도록 콜백으로 전달. */
+  private readonly isStillIdle = (): boolean => Date.now() - this.lastKeystroke > IDLE_MERGE_MS;
+
   private async runSync(): Promise<void> {
-    const idle = Date.now() - this.lastKeystroke > IDLE_MERGE_MS;
     try {
-      await this.opts.git.syncDown(idle); // idle 이면 merge, 아니면 fetch 만
+      await this.opts.git.syncDown(this.isStillIdle(), this.isStillIdle); // idle 이면 merge, 아니면 fetch 만
       this.opts.onSynced?.();
       this.opts.onState('synced');
     } catch (e) {

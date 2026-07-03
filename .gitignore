@@ -10,6 +10,8 @@ plugin/main.js
 
 # test bundle output (esbuild)
 _bundle.cjs
+_linediff.cjs
+_git.cjs
 
 # secrets / local runtime
 .env

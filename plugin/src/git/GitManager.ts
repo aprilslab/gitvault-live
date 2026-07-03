@@ -1,5 +1,5 @@
 import { simpleGit, SimpleGit } from 'simple-git';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { PromiseQueue } from './PromiseQueue';
 
@@ -76,13 +76,27 @@ export class GitManager {
    * sync-down: flush + fetch (+ 선택적 merge).
    * merge=false 면 origin/* 갱신만(패널·데코레이션용) — 타이핑 중 워킹트리를 건드리지 않는다.
    * merge=true 면 origin/main 을 wip 로 union 병합(idle 에만 호출).
+   *
+   * isStillIdle 은 워킹트리를 쓰기 직전에 재평가된다 — 느린 fetch 동안 타이핑이 재개되면
+   * merge 를 다음 사이클로 연기해, 에디터 리로드가 미저장 버퍼를 날리는 TOCTOU 를 막는다.
    */
-  syncDown(merge: boolean): Promise<void> {
+  syncDown(merge: boolean, isStillIdle: () => boolean = () => true): Promise<void> {
     return this.queue.add(async () => {
-      await this.flushEditors();
       await this.flushCommit();
       await this.git.fetch(['origin', '--prune']).catch((e) => this.log(`fetch 실패: ${redact(e)}`));
-      if (merge) await this.suppressed(() => this.mergeDown());
+      if (!merge) return;
+      if (!isStillIdle()) {
+        this.log('sync-down: 타이핑 감지 — merge 연기');
+        return;
+      }
+      // fetch 동안 들어온 입력을 디스크·커밋으로 흡수(TOCTOU 봉합). dirty 버퍼가 있었다면
+      // save()가 modify 이벤트를 내 lastKeystroke 가 갱신되고, 아래 재판정이 연기시킨다.
+      await this.flushCommit();
+      if (!isStillIdle()) {
+        this.log('sync-down: 타이핑 감지 — merge 연기');
+        return;
+      }
+      await this.suppressed(() => this.mergeDown());
     });
   }
 
@@ -143,13 +157,17 @@ export class GitManager {
   }
 
   /**
-   * 활성 파일의 origin/main(old) 대비 로컬 워킹트리(new) unified diff (U0, context 0).
-   * CollabDecorations 의 hunk 파싱 소스. path 는 vault(=repo) 상대경로.
+   * origin/main 에서의 파일 내용 (인라인 데코레이션의 diff 기준). ref 나 파일이 없으면 null.
+   * path 는 vault(=repo) 상대경로.
    * read-only 라 PromiseQueue 를 우회한다 — 느린 fetch/merge 뒤에서 대기하지 않아 하이라이트가 즉시 반영된다.
    */
-  async fileDiffVsMain(path: string): Promise<string> {
-    if (!(await this.refExists('refs/remotes/origin/main'))) return '';
-    return this.git.raw(['diff', '--no-color', '-U0', 'origin/main', '--', path]).catch(() => '');
+  async mainFileContent(path: string): Promise<string | null> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) return null;
+    try {
+      return await this.git.raw(['show', `origin/main:${path}`]);
+    } catch {
+      return null; // origin/main 에 없는 파일(신규 노트 등)
+    }
   }
 
   private async mergeBaseMain(): Promise<string | null> {
@@ -179,7 +197,25 @@ export class GitManager {
       await this.git.raw(['remote', 'set-url', 'origin', this.opts.authedRemote]);
     }
     await this.git.fetch(['origin', '--prune']).catch((e) => this.log(`초기 fetch 실패: ${redact(e)}`));
-    await this.suppressed(() => this.ensureWipBranch());
+    await this.suppressed(async () => {
+      await this.ensureWipBranch();
+      // 모든 경로(adopt/기존 wip/빈 원격 seed)에서 union 드라이버를 보장 — 없으면 .md 충돌이
+      // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. writeIfAbsent 라 기존 파일은 존중.
+      this.seedRepoFiles();
+    });
+    this.warnIfNoUnion();
+  }
+
+  /** 기존 .gitattributes 에 union 드라이버가 없으면 경고만(공유 설정 파일이라 내용 변조는 안 함). */
+  private warnIfNoUnion(): void {
+    try {
+      const content = readFileSync(join(this.opts.basePath, '.gitattributes'), 'utf8');
+      if (!content.includes('merge=union')) {
+        this.log('.gitattributes 에 merge=union 없음 — .md 동시 편집 충돌 시 원격이 우선됩니다');
+      }
+    } catch {
+      /* 파일 없음 — seedRepoFiles 가 방금 생성했으므로 도달하지 않음 */
+    }
   }
 
   private async ensureWipBranch(): Promise<void> {
@@ -200,11 +236,11 @@ export class GitManager {
       await this.git.raw(['checkout-index', '-a']);
     } else {
       await this.git.raw(['checkout', '-B', this.wipRef]);
-      this.seedRepoFiles();
+      // seed 파일은 ensureRepoLocked 가 모든 경로 공통으로 생성한다.
     }
   }
 
-  /** 빈 원격 seed: .gitattributes(union) + .gitignore. 기존 파일은 존중. */
+  /** seed 파일 보장: .gitattributes(union) + .gitignore. 기존 파일은 존중(wx). 모든 연결 경로에서 호출. */
   private seedRepoFiles(): void {
     writeIfAbsent(this.opts.basePath, '.gitattributes', '*.md merge=union\n* text=auto eol=lf\n');
     writeIfAbsent(this.opts.basePath, '.gitignore', '.obsidian/\n.DS_Store\nThumbs.db\n');

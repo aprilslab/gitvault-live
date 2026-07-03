@@ -91,6 +91,9 @@ export class Committer {
     }
     await this.git.fetch(['origin', '--prune']).catch(() => undefined);
     await this.ensureMainBranch();
+    // 모든 경로(adopt/기존 main/빈 원격 seed)에서 union 드라이버 보장 — 없으면 .md 충돌이
+    // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. wx 라 기존 파일은 존중.
+    this.seedRepoFiles();
   }
 
   /** DEVICE_ID env > .git/ogs-device-id 영속값 > 신규 생성(영속화). 재시작 시 동일 identity 유지. */
@@ -136,13 +139,12 @@ export class Committer {
       if (status.trim()) await this.git.commit(`adopt: ${nowIso()}`);
       await this.git.raw(['checkout-index', '-a']); // index→워킹트리 실체화(기존 파일은 미덮어씀)
     } else {
-      // 원격이 비었으면 현재 워킹트리 + seed 파일로 첫 main.
+      // 원격이 비었으면 현재 워킹트리로 첫 main (seed 파일은 ensureRepo 가 공통 생성).
       await this.git.raw(['checkout', '-B', 'main']);
-      this.seedRepoFiles();
     }
   }
 
-  /** 빈 원격 seed: .gitattributes(union) + .gitignore 를 워킹트리에 둔다(첫 커밋에 흡수됨). 기존 파일은 존중. */
+  /** seed 파일 보장: .gitattributes(union) + .gitignore (다음 커밋에 흡수됨). 기존 파일은 존중(wx). */
   private seedRepoFiles(): void {
     const attrs = join(this.cfg.vaultPath, '.gitattributes');
     const ignore = join(this.cfg.vaultPath, '.gitignore');

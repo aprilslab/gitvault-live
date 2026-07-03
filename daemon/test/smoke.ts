@@ -28,17 +28,29 @@ function initBare(bare: string): void {
 }
 
 /** clone 후 초기 커밋을 push 해 원격 main 을 populate (관리자가 대상 repo 를 미리 세팅한 상황 모사). */
-function seedRemote(bare: string, root: string, files: Record<string, string>): void {
+function seedRemote(bare: string, root: string, files: Record<string, string>, withUnion = true): void {
   const seed = join(root, `seed-${Math.abs(hash(bare))}`);
   sh('git', ['clone', '-q', bare, seed]);
   sh('git', ['-C', seed, 'config', 'user.email', 't@t']);
   sh('git', ['-C', seed, 'config', 'user.name', 't']);
-  writeFileSync(join(seed, '.gitattributes'), '*.md merge=union\n* text=auto eol=lf\n');
+  if (withUnion) writeFileSync(join(seed, '.gitattributes'), '*.md merge=union\n* text=auto eol=lf\n');
   for (const [name, content] of Object.entries(files)) writeFileSync(join(seed, name), content);
   sh('git', ['-C', seed, 'add', '-A']);
   sh('git', ['-C', seed, 'commit', '-qm', 'seed']);
   sh('git', ['-C', seed, 'push', '-q', 'origin', 'main']);
 }
+/** 외부 참여자가 main:doc.md 를 주어진 내용으로 덮어 push (동시 편집 충돌 모사). */
+let extN = 0;
+function pushToMainD(root: string, bare: string, docContent: string): void {
+  const dir = join(root, `extD-${extN++}`);
+  sh('git', ['clone', '-q', bare, dir]);
+  sh('git', ['-C', dir, 'config', 'user.email', 't@t']);
+  sh('git', ['-C', dir, 'config', 'user.name', 't']);
+  writeFileSync(join(dir, 'doc.md'), docContent);
+  sh('git', ['-C', dir, 'commit', '-qam', 'ext-edit']);
+  sh('git', ['-C', dir, 'push', '-q', 'origin', 'main']);
+}
+
 function hash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
@@ -136,6 +148,31 @@ async function main(): Promise<void> {
     c2.stop();
     assert(id1.length > 0 && id1 === id2, `deviceId 재시작 간 영속됨 (${id1})`);
     assert(existsSync(join(vaultC, '.git', 'ogs-device-id')), 'device-id 파일이 .git 에 저장됨');
+
+    // ── 시나리오 D: union 없는 기존 원격 adopt → union 시드 보장 + 동시 같은-라인 편집 공존 ──
+    // (이전엔 seedRepoFiles 가 빈-원격 경로에서만 실행돼, adopt 시 union 없이 -X theirs=원격 승으로 로컬 소실)
+    const bareD = join(root, 'vaultD.git');
+    initBare(bareD);
+    seedRemote(bareD, root, { 'doc.md': 'a\nb\nc\n' }, /* withUnion */ false);
+    const vaultD = join(root, 'vaultD');
+    mkdirSync(vaultD);
+    const d = new Committer({ vaultPath: vaultD, remote: bareD, deviceId: 'devD', debounceMs: 10 });
+    await d.start();
+    assert(existsSync(join(vaultD, '.gitattributes')), 'adopt(union 미보유 원격)에서도 .gitattributes 시드됨');
+    assert(
+      git(bareD, ['show', 'main:.gitattributes']).includes('merge=union'),
+      'union 드라이버가 main 에 push 됨',
+    );
+    // 외부가 같은 라인(b) 편집 + 로컬도 같은 라인 편집 → 양쪽 공존해야 함
+    pushToMainD(root, bareD, 'a\nb-REMOTE\nc\n');
+    writeFileSync(join(vaultD, 'doc.md'), 'a\nb-LOCAL\nc\n');
+    assert((await d.commitAndPush()) === 'pushed', 'adopt 후 동시 편집 push');
+    const mergedD = git(bareD, ['show', 'main:doc.md']);
+    assert(
+      mergedD.includes('b-REMOTE') && mergedD.includes('b-LOCAL'),
+      `union 미보유 원격 adopt 후에도 양쪽 공존 (${JSON.stringify(mergedD)})`,
+    );
+    d.stop();
 
     console.log('SMOKE OK');
   } finally {
