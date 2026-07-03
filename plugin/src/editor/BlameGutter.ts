@@ -41,7 +41,8 @@ function build(authors: (BlameLine | null)[], doc: Text, nowMs: number): RangeSe
     if (!a) continue; // 로컬/미저장 → 빈칸
     const text = `${truncate(a.author)} · ${relativeTime(a.epoch, nowMs)}`;
     const hint = `${a.author} · ${absoluteTime(a.epoch)}`;
-    builder.add(doc.line(ln).from, doc.line(ln).from, new BlameGutterMarker(text, hint));
+    const from = doc.line(ln).from;
+    builder.add(from, from, new BlameGutterMarker(text, hint));
   }
   return builder.finish();
 }

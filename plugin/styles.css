@@ -69,9 +69,6 @@
 }
 
 /* 라인 blame 거터 — muted·우측정렬·작은 글꼴, 본문과 시각적 분리 */
-.ogs-blame-gutter-col {
-  border-right: 1px solid var(--background-modifier-border);
-}
 .ogs-blame-gutter {
   display: inline-block;
   color: var(--text-faint);
@@ -82,4 +79,5 @@
   white-space: nowrap;
   overflow: hidden;
   cursor: default;
+  border-right: 1px solid var(--background-modifier-border);
 }

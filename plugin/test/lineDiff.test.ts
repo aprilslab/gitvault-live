@@ -98,7 +98,7 @@ import { alignLines, toLines } from '../src/editor/lineDiff';
   const a = toLines('x\ny\nz\n');
   const b = toLines('x\nY\nz\n'); // 중간 치환
   const ops = alignLines(a, b);
-  // 공통 x, (y→Y: -y +Y), 공통 z  → 0,1,2,0  (역추적 순서상 1이 2보다 먼저)
+  // 공통 x, (y→Y: -y +Y), 공통 z  → 0,2,1,0  (역추적 순서상 2(추가)가 1(삭제)보다 먼저)
   const removed = ops.filter((o) => o === 1).length;
   const added = ops.filter((o) => o === 2).length;
   const common = ops.filter((o) => o === 0).length;

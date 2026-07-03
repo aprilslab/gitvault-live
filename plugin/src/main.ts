@@ -37,6 +37,8 @@ export default class GitSyncPlugin extends Plugin {
   private readonly mainBlameCache = new Map<string, Map<string, string>>();
   /** 에디터별 마지막 hunk 직렬화 키 — 불변이면 dispatch/데코 재빌드 생략. */
   private readonly lastHunksKey = new WeakMap<EditorView, string>();
+  /** 에디터별 마지막 blame 작성자 직렬화 키 — 불변이면 dispatch/거터 재빌드 생략. */
+  private readonly lastBlameKey = new WeakMap<EditorView, string>();
   /** 타이핑 중 데코 갱신 디바운서 (editor-change 마다 타이머 리셋). */
   private readonly decoDebounce = debounce(
     () => {
@@ -307,13 +309,19 @@ export default class GitSyncPlugin extends Plugin {
         base = await this.git.mainFileContent(path);
         this.mainCache.set(path, base);
       }
-      let blame = this.blameCache.get(path);
-      if (blame === undefined) {
-        blame = await this.git.mainBlameLines(path);
-        this.blameCache.set(path, blame);
+      // origin/main 에 없는 신규 노트 → 전부 로컬 → 거터 빈칸 (blame git 페치 자체를 생략)
+      let authors: (BlameLine | null)[] = [];
+      if (base !== null) {
+        let blame = this.blameCache.get(path);
+        if (blame === undefined) {
+          blame = await this.git.mainBlameLines(path);
+          this.blameCache.set(path, blame);
+        }
+        authors = alignBlame(base, cm.state.doc.toString(), blame);
       }
-      // origin/main 에 없는 신규 노트 → 전부 로컬 → 거터 빈칸
-      const authors = base === null ? [] : alignBlame(base, cm.state.doc.toString(), blame);
+      const key = JSON.stringify(authors);
+      if (this.lastBlameKey.get(cm) === key) return; // 불변 — dispatch/재빌드 생략
+      this.lastBlameKey.set(cm, key);
       pushBlame(cm, authors);
     } catch {
       /* 일시 오류 — blame 갱신만 건너뜀 */
