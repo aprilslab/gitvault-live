@@ -2,7 +2,7 @@
   "name": "obsidian-git-sync",
   "version": "0.1.0",
   "private": true,
-  "description": "Git-based Obsidian vault sync — hermes daemon + desktop plugin. Union merge, squash-to-main, git hidden from non-developers.",
+  "description": "Git-based Obsidian sync — desktop plugin (auto-sync, inline collab decorations, squash-to-main) + headless agent git client. Standard hosted git (HTTPS+token) as SoT.",
   "license": "MIT",
   "workspaces": [
     "plugin",
