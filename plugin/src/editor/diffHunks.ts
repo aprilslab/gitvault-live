@@ -12,6 +12,8 @@ export interface DiffHunk {
   addedCount: number;
   /** origin/main 에만 있는(로컬에 없는) 라인들 = 도착 예정 내용. */
   removedLines: string[];
+  /** 이 incoming hunk 를 작성한 참여자(blame 으로 채움). 없으면 undefined. */
+  author?: string;
 }
 
 const HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;

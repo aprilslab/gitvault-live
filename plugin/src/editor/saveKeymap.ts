@@ -2,20 +2,19 @@ import { Prec, type Extension } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 
 /**
- * Cmd/Ctrl+S → 저장(squash-to-main) 콜백. Obsidian 기본 동작보다 먼저 처리(Prec.highest).
- * Mod-s 외에는 어떤 키도 바인딩하지 않는다 — Enter 등 기본 입력 동작에 관여 금지.
+ * 저장(squash-to-main) 단축키. Obsidian 기본 동작보다 먼저 처리(Prec.highest).
+ * - Mod-Shift-s (Cmd/Ctrl+Shift+S): 충돌 없는 확실한 조합 — 이게 주 단축키.
+ * - Mod-s (Cmd/Ctrl+S): Obsidian 코어 "현재 파일 저장"이 먼저 삼키는 환경이 많아 폴백.
  */
 export function saveKeymap(onSave: () => void): Extension {
+  const run = (): boolean => {
+    onSave();
+    return true;
+  };
   return Prec.highest(
     keymap.of([
-      {
-        key: 'Mod-s',
-        preventDefault: true,
-        run: () => {
-          onSave();
-          return true;
-        },
-      },
+      { key: 'Mod-Shift-s', preventDefault: true, run },
+      { key: 'Mod-s', preventDefault: true, run },
     ]),
   );
 }

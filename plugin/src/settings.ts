@@ -23,7 +23,7 @@ export const DEFAULT_SETTINGS: OgsSettings = {
   username: '',
   token: '',
   deviceId: '',
-  autoSyncSeconds: 60,
+  autoSyncSeconds: 5,
   showInlineChanges: false,
 };
 
@@ -137,11 +137,11 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('자동 동기화 주기(초)')
-      .setDesc('원격 변경을 가져오고 패널을 갱신하는 주기.')
+      .setDesc('원격 변경을 가져오고 패널을 갱신하는 주기. 최소 3초(낮출수록 git 부하↑).')
       .addText((t) =>
         t.setValue(String(s.autoSyncSeconds)).onChange(async (v) => {
           const n = Number(v);
-          if (Number.isFinite(n) && n >= 10) {
+          if (Number.isFinite(n) && n >= 3) {
             s.autoSyncSeconds = Math.floor(n);
             await this.plugin.saveSettings();
           }

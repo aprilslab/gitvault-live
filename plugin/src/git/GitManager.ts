@@ -170,6 +170,40 @@ export class GitManager {
     }
   }
 
+  /**
+   * origin/main 에서 이 파일을 마지막으로 커밋한 작성자(=참여자 deviceId). "누가 작성 중" 표시용.
+   * read-only 라 큐 우회. ref/파일 없으면 null.
+   */
+  async mainAuthor(path: string): Promise<string | null> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) return null;
+    try {
+      const out = (await this.git.raw(['log', '-1', '--format=%an', 'origin/main', '--', path])).trim();
+      return out || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * origin/main 각 라인의 작성자를 "라인내용 → 작성자" 맵으로. 라인별 "누가 작성 중" 표시용.
+   * (인메모리 diff 의 removedLines 텍스트로 조회 — 중복 라인은 마지막 작성자.) read-only, 큐 우회.
+   */
+  async mainBlame(path: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!(await this.refExists('refs/remotes/origin/main'))) return map;
+    try {
+      const out = await this.git.raw(['blame', '--line-porcelain', 'origin/main', '--', path]);
+      let author = '';
+      for (const line of out.split('\n')) {
+        if (line.startsWith('author ')) author = line.slice(7);
+        else if (line.startsWith('\t')) map.set(line.slice(1), author);
+      }
+    } catch {
+      /* ref/파일 없음 — 빈 맵 */
+    }
+    return map;
+  }
+
   private async mergeBaseMain(): Promise<string | null> {
     if (!(await this.refExists('refs/remotes/origin/main'))) return null;
     try {

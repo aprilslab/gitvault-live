@@ -29,6 +29,8 @@ export default class GitSyncPlugin extends Plugin {
   private applyChain: Promise<void> = Promise.resolve();
   /** path → origin/main 파일 내용(없으면 null). fetch/커밋/저장 후(refreshCollab) 무효화. */
   private readonly mainCache = new Map<string, string | null>();
+  private readonly mainAuthorCache = new Map<string, string | null>();
+  private readonly mainBlameCache = new Map<string, Map<string, string>>();
   /** 에디터별 마지막 hunk 직렬화 키 — 불변이면 dispatch/데코 재빌드 생략. */
   private readonly lastHunksKey = new WeakMap<EditorView, string>();
   /** 타이핑 중 데코 갱신 디바운서 (editor-change 마다 타이머 리셋). */
@@ -158,6 +160,8 @@ export default class GitSyncPlugin extends Plugin {
   /** 패널 + 활성 에디터 데코레이션 + "저장 대기 N" 상태바를 함께 갱신 (sync/커밋/저장 시). */
   private async refreshCollab(): Promise<void> {
     this.mainCache.clear(); // origin/main 이 움직였을 수 있는 시점 — 데코 diff 기준 무효화
+    this.mainAuthorCache.clear();
+    this.mainBlameCache.clear();
     this.refreshPanels();
     await this.refreshActiveDecorations();
     await this.updatePublishStatus();
@@ -218,10 +222,28 @@ export default class GitSyncPlugin extends Plugin {
       }
       // origin/main 에 없는 신규 노트는 데코 없음 — outgoing 표시는 저장 배지/패널 담당.
       const hunks = base === null ? [] : diffLines(base, cm.state.doc.toString());
-      const key = JSON.stringify(hunks);
+      // 라인별 작성자: blame(내용→작성자)으로 각 incoming hunk 에 author 부착. 파일 최신 작성자는 폴백.
+      let author = this.mainAuthorCache.get(path);
+      if (author === undefined) {
+        author = await this.git.mainAuthor(path);
+        this.mainAuthorCache.set(path, author);
+      }
+      if (hunks.some((h) => h.removedLines.length > 0)) {
+        let blame = this.mainBlameCache.get(path);
+        if (blame === undefined) {
+          blame = await this.git.mainBlame(path);
+          this.mainBlameCache.set(path, blame);
+        }
+        for (const h of hunks) {
+          if (h.removedLines.length === 0) continue;
+          const probe = h.removedLines.find((l) => l.trim().length > 0) ?? h.removedLines[0];
+          h.author = blame.get(probe) ?? author ?? undefined;
+        }
+      }
+      const key = JSON.stringify(hunks); // hunks 가 author 를 포함 → 별도 키 불필요
       if (this.lastHunksKey.get(cm) === key) return; // 불변 — dispatch/재빌드 생략
       this.lastHunksKey.set(cm, key);
-      pushHunks(cm, hunks);
+      pushHunks(cm, hunks, author ?? '다른 참여자');
     } catch {
       /* 일시 오류 — 데코레이션 갱신만 건너뜀 */
     }
