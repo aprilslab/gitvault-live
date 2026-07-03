@@ -12,6 +12,7 @@ plugin/main.js
 _bundle.cjs
 _linediff.cjs
 _git.cjs
+_relative.cjs
 
 # secrets / local runtime
 .env
