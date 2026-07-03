@@ -12,6 +12,9 @@ import { AutoSync } from './sync/AutoSync';
 import { StatusBar } from './ui/StatusBar';
 import { DiffPanel, VIEW_TYPE_OGS_DIFF } from './ui/DiffPanel';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
+import { blameGutter, pushBlame } from './editor/BlameGutter';
+import { alignBlame } from './editor/blameLines';
+import type { BlameLine } from './git/GitManager';
 import { saveKeymap } from './editor/saveKeymap';
 import { diffLines } from './editor/lineDiff';
 
@@ -29,12 +32,20 @@ export default class GitSyncPlugin extends Plugin {
   private applyChain: Promise<void> = Promise.resolve();
   /** path → origin/main 파일 내용(없으면 null). fetch/커밋/저장 후(refreshCollab) 무효화. */
   private readonly mainCache = new Map<string, string | null>();
+  private readonly blameCache = new Map<string, BlameLine[]>();
   private readonly mainAuthorCache = new Map<string, string | null>();
   private readonly mainBlameCache = new Map<string, Map<string, string>>();
   /** 에디터별 마지막 hunk 직렬화 키 — 불변이면 dispatch/데코 재빌드 생략. */
   private readonly lastHunksKey = new WeakMap<EditorView, string>();
   /** 타이핑 중 데코 갱신 디바운서 (editor-change 마다 타이머 리셋). */
-  private readonly decoDebounce = debounce(() => void this.refreshActiveDecorations(), DECO_DEBOUNCE_MS, true);
+  private readonly decoDebounce = debounce(
+    () => {
+      void this.refreshActiveDecorations();
+      void this.refreshLineBlame();
+    },
+    DECO_DEBOUNCE_MS,
+    true,
+  );
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -43,7 +54,11 @@ export default class GitSyncPlugin extends Plugin {
     this.addSettingTab(new GitSyncSettingTab(this.app, this));
 
     // 협업 인라인 데코레이션 + Cmd/Ctrl+S 저장 keymap (CM6, Source/라이브프리뷰).
-    this.registerEditorExtension([collabDecorations(), saveKeymap(() => void this.publishNow())]);
+    this.registerEditorExtension([
+      collabDecorations(),
+      blameGutter(),
+      saveKeymap(() => void this.publishNow()),
+    ]);
 
     // 저장 안 된 변경이 있을 때 우측하단에 뜨는 클릭형 저장 버튼(리본 대체 + 미저장 표시).
     this.saveBadge = document.body.createDiv({ cls: 'ogs-save-badge' });
@@ -75,12 +90,32 @@ export default class GitSyncPlugin extends Plugin {
       name: '저장 — 공식본에 반영',
       callback: () => void this.publishNow(),
     });
+    this.addCommand({
+      id: 'ogs-toggle-line-blame',
+      name: '라인 작성자(blame) 거터 토글',
+      callback: async () => {
+        this.settings.showLineBlame = !this.settings.showLineBlame;
+        await this.saveSettings();
+        new Notice(`라인 blame ${this.settings.showLineBlame ? '켜짐' : '꺼짐'}`);
+        void this.refreshLineBlame();
+      },
+    });
     // Cmd/Ctrl+S 는 위 registerEditorExtension 의 saveKeymap(Prec.highest)이 처리한다.
 
     // 활성 노트 전환 시 데코레이션 재계산. active-leaf-change 는 같은 탭 내 파일 전환(link/뒤로가기)엔
     // 안 뜨므로 file-open 도 함께 등록 — 안 그러면 이전 파일 데코가 새 문서에 남는다.
-    this.registerEvent(this.app.workspace.on('active-leaf-change', () => void this.refreshActiveDecorations()));
-    this.registerEvent(this.app.workspace.on('file-open', () => void this.refreshActiveDecorations()));
+    this.registerEvent(
+      this.app.workspace.on('active-leaf-change', () => {
+        void this.refreshActiveDecorations();
+        void this.refreshLineBlame();
+      }),
+    );
+    this.registerEvent(
+      this.app.workspace.on('file-open', () => {
+        void this.refreshActiveDecorations();
+        void this.refreshLineBlame();
+      }),
+    );
     // 타이핑(엔터 포함)에 즉시 반응 — 버퍼 기준 인메모리 diff 라 디스크 저장을 기다리지 않는다.
     this.registerEvent(this.app.workspace.on('editor-change', () => this.decoDebounce()));
 
@@ -162,8 +197,10 @@ export default class GitSyncPlugin extends Plugin {
     this.mainCache.clear(); // origin/main 이 움직였을 수 있는 시점 — 데코 diff 기준 무효화
     this.mainAuthorCache.clear();
     this.mainBlameCache.clear();
+    this.blameCache.clear();
     this.refreshPanels();
     await this.refreshActiveDecorations();
+    await this.refreshLineBlame();
     await this.updatePublishStatus();
   }
 
@@ -246,6 +283,40 @@ export default class GitSyncPlugin extends Plugin {
       pushHunks(cm, hunks, author ?? '다른 참여자');
     } catch {
       /* 일시 오류 — 데코레이션 갱신만 건너뜀 */
+    }
+  }
+
+  /**
+   * 활성 노트 각 줄에 origin/main 작성자를 거터로 표시(showLineBlame 켜졌을 때).
+   * blame git 페치는 file-open/sync 시점만 → blameCache. 타이핑은 인메모리 alignBlame(git 0회).
+   */
+  private async refreshLineBlame(): Promise<void> {
+    if (!this.git) return;
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || !view.file) return;
+    const cm = editorViewOf(view);
+    if (!cm) return; // 리딩 모드 등 — 무시
+    if (!this.settings.showLineBlame) {
+      pushBlame(cm, []); // 꺼졌으면 거터 비움
+      return;
+    }
+    const path = view.file.path;
+    try {
+      let base = this.mainCache.get(path);
+      if (base === undefined) {
+        base = await this.git.mainFileContent(path);
+        this.mainCache.set(path, base);
+      }
+      let blame = this.blameCache.get(path);
+      if (blame === undefined) {
+        blame = await this.git.mainBlameLines(path);
+        this.blameCache.set(path, blame);
+      }
+      // origin/main 에 없는 신규 노트 → 전부 로컬 → 거터 빈칸
+      const authors = base === null ? [] : alignBlame(base, cm.state.doc.toString(), blame);
+      pushBlame(cm, authors);
+    } catch {
+      /* 일시 오류 — blame 갱신만 건너뜀 */
     }
   }
 
