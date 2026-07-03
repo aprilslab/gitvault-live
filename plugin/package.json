@@ -12,6 +12,7 @@
     "test:linediff": "esbuild test/lineDiff.test.ts --bundle --platform=node --format=cjs --outfile=test/_linediff.cjs && node test/_linediff.cjs",
     "test:git": "esbuild test/gitManager.test.ts --bundle --platform=node --format=cjs --outfile=test/_git.cjs && node test/_git.cjs",
     "test:relative": "esbuild test/relativeTime.test.ts --bundle --platform=node --format=cjs --outfile=test/_relative.cjs && node test/_relative.cjs",
+    "test:blame": "esbuild test/blameLines.test.ts --bundle --platform=node --format=cjs --outfile=test/_blame.cjs && node test/_blame.cjs",
     "test": "npm run test:hunks && npm run test:linediff && npm run test:git"
   },
   "dependencies": {
