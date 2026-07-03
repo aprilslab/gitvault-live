@@ -1,0 +1,21 @@
+{
+  "name": "obsidian-git-sync-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hermes vault watcher daemon — auto commit/push, idle save, sync-down.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --external:fsevents",
+    "typecheck": "tsc --noEmit",
+    "smoke": "esbuild test/smoke.ts --bundle --platform=node --target=node18 --outfile=dist/smoke.cjs --external:fsevents && node dist/smoke.cjs"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.1",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
