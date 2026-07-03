@@ -9,6 +9,9 @@
 .ogs-statusbar.mod-syncing {
   color: var(--text-accent);
 }
+.ogs-statusbar.mod-pending {
+  color: var(--text-warning);
+}
 
 /* 협업 diff 패널 (Phase C) */
 .ogs-diff-panel {
@@ -33,6 +36,26 @@
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   padding: 4px 6px;
+}
+
+/* 플로팅 저장 버튼 — 미발행 변경 있을 때만 표시 */
+.ogs-save-badge {
+  position: fixed;
+  bottom: 32px;
+  right: 24px;
+  z-index: 100;
+  padding: 6px 14px;
+  border-radius: 16px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  user-select: none;
+}
+.ogs-save-badge:hover {
+  background: var(--interactive-accent-hover);
 }
 
 /* 인라인 데코레이션 (Phase C) */

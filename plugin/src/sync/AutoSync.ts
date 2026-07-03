@@ -61,6 +61,7 @@ export class AutoSync {
     try {
       await this.opts.git.commitAndPushWip();
       this.opts.onState('synced');
+      this.opts.onSynced?.(); // 커밋 후 패널·데코·"저장 대기 N" 갱신
     } catch (e) {
       this.opts.onState('error', short(e));
     }

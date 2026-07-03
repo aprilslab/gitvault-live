@@ -145,12 +145,11 @@ export class GitManager {
   /**
    * 활성 파일의 origin/main(old) 대비 로컬 워킹트리(new) unified diff (U0, context 0).
    * CollabDecorations 의 hunk 파싱 소스. path 는 vault(=repo) 상대경로.
+   * read-only 라 PromiseQueue 를 우회한다 — 느린 fetch/merge 뒤에서 대기하지 않아 하이라이트가 즉시 반영된다.
    */
-  fileDiffVsMain(path: string): Promise<string> {
-    return this.queue.add(async () => {
-      if (!(await this.refExists('refs/remotes/origin/main'))) return '';
-      return this.git.raw(['diff', '--no-color', '-U0', 'origin/main', '--', path]).catch(() => '');
-    });
+  async fileDiffVsMain(path: string): Promise<string> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) return '';
+    return this.git.raw(['diff', '--no-color', '-U0', 'origin/main', '--', path]).catch(() => '');
   }
 
   private async mergeBaseMain(): Promise<string | null> {
