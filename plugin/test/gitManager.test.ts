@@ -90,6 +90,27 @@ async function main(): Promise<void> {
     assert(content !== null && content.includes('line2-REMOTE'), 'mainFileContent = origin/main 내용');
     assert((await g1.mainFileContent('없는파일.md')) === null, 'origin/main 에 없는 파일 = null');
 
+    // --- mainBlameLines: origin/main 각 줄 작성자+epoch 파싱 ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-blame-'));
+      const bare = initBare(root, 'blame.git');
+      pushToMain(root, bare, { 'note.md': '첫째 줄\n둘째 줄\n셋째 줄\n' });
+      const local = join(root, 'local');
+      mkdirSync(local, { recursive: true });
+      const gm = newManager(local, bare, 'dev-A');
+      await gm.ensureRepo();
+
+      const blame = await gm.mainBlameLines('note.md');
+      assert(blame.length === 3, `blame 3줄 (got ${blame.length})`);
+      assert(blame.every((b) => b.author === 't'), 'blame 작성자=t(pushToMain 커밋자)');
+      assert(blame.every((b) => b.epoch > 0), 'blame epoch>0');
+
+      const none = await gm.mainBlameLines('does-not-exist.md');
+      assert(none.length === 0, '없는 파일 → 빈 배열');
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });

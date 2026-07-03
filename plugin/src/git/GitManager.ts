@@ -9,6 +9,12 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수
 const SAVE_RETRIES = 3;
 
+/** origin/main 한 줄의 작성자 + author-time(unix 초). 라인 blame 거터용. */
+export interface BlameLine {
+  author: string;
+  epoch: number;
+}
+
 export interface GitManagerOptions {
   /** vault 워킹트리 절대경로 (FileSystemAdapter.getBasePath()). */
   basePath: string;
@@ -202,6 +208,28 @@ export class GitManager {
       /* ref/파일 없음 — 빈 맵 */
     }
     return map;
+  }
+
+  /**
+   * origin/main 각 줄의 작성자+author-time 을 줄번호순 배열로. GitLens식 라인 blame 거터용.
+   * (내용 아닌 위치 기반 — 중복 줄 안전.) read-only, 큐 우회. ref/파일 없으면 빈 배열.
+   */
+  async mainBlameLines(path: string): Promise<BlameLine[]> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) return [];
+    try {
+      const out = await this.git.raw(['blame', '--line-porcelain', 'origin/main', '--', path]);
+      const lines: BlameLine[] = [];
+      let author = '';
+      let epoch = 0;
+      for (const line of out.split('\n')) {
+        if (line.startsWith('author ')) author = line.slice(7);
+        else if (line.startsWith('author-time ')) epoch = Number(line.slice(12)) || 0;
+        else if (line.startsWith('\t')) lines.push({ author, epoch });
+      }
+      return lines;
+    } catch {
+      return []; // ref/파일 없음
+    }
   }
 
   private async mergeBaseMain(): Promise<string | null> {
