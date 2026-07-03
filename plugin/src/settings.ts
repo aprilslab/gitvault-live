@@ -16,6 +16,8 @@ export interface OgsSettings {
   autoSyncSeconds: number;
   /** 에디터 본문에 변경 라인 인라인 하이라이트 표시(에디터 버퍼 기준 인메모리 diff — 타이핑 즉시 반영). */
   showInlineChanges: boolean;
+  /** 라인 작성자(blame) 거터 표시. 커맨드 ogs-toggle-line-blame 로 토글. */
+  showLineBlame: boolean;
 }
 
 export const DEFAULT_SETTINGS: OgsSettings = {
@@ -25,6 +27,7 @@ export const DEFAULT_SETTINGS: OgsSettings = {
   deviceId: '',
   autoSyncSeconds: 5,
   showInlineChanges: false,
+  showLineBlame: true,
 };
 
 function slug(s: string): string {
