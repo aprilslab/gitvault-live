@@ -37,22 +37,26 @@ export class DiffPanel extends ItemView {
   }
 
   async refresh(): Promise<void> {
-    const root = this.contentEl;
-    root.empty();
-    root.addClass('ogs-diff-panel');
-
     const git = this.getGit();
-    if (!git) {
-      root.createEl('div', { text: '미연결 — 설정에서 저장소를 연결하세요.', cls: 'ogs-diff-empty' });
-      return;
-    }
 
     let incoming: FileChange[] = [];
     let outgoing: FileChange[] = [];
-    try {
-      [incoming, outgoing] = await Promise.all([git.incomingFiles(), git.outgoingFiles()]);
-    } catch {
-      /* 오프라인/일시 오류 — 빈 목록으로 표시 */
+    if (git) {
+      try {
+        [incoming, outgoing] = await Promise.all([git.incomingFiles(), git.outgoingFiles()]);
+      } catch {
+        /* 오프라인/일시 오류 — 빈 목록으로 표시 */
+      }
+    }
+
+    // 데이터 확보 후 한 번에 교체 (empty→append 사이에 await 없음) — 겹친 refresh 가
+    // append 를 교차시켜 섹션이 중복 렌더되는 것을 방지한다.
+    const root = this.contentEl;
+    root.empty();
+    root.addClass('ogs-diff-panel');
+    if (!git) {
+      root.createEl('div', { text: '미연결 — 설정에서 저장소를 연결하세요.', cls: 'ogs-diff-empty' });
+      return;
     }
     this.section(root, '들어온 변경 (다른 참여자)', incoming);
     this.section(root, '내가 저장할 변경', outgoing);

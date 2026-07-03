@@ -22,6 +22,7 @@ export default class GitSyncPlugin extends Plugin {
   private git?: GitManager;
   private autoSync?: AutoSync;
   private statusBar?: StatusBar;
+  private applyChain: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -57,8 +58,10 @@ export default class GitSyncPlugin extends Plugin {
       callback: () => this.openSaveModal(),
     });
 
-    // 활성 노트 전환 시 데코레이션 재계산.
+    // 활성 노트 전환 시 데코레이션 재계산. active-leaf-change 는 같은 탭 내 파일 전환(link/뒤로가기)엔
+    // 안 뜨므로 file-open 도 함께 등록 — 안 그러면 이전 파일 데코가 새 문서에 남는다.
     this.registerEvent(this.app.workspace.on('active-leaf-change', () => void this.refreshActiveDecorations()));
+    this.registerEvent(this.app.workspace.on('file-open', () => void this.refreshActiveDecorations()));
 
     // 시작 커밋 폭주 방지: 레이아웃 준비 후에 감시 시작.
     this.app.workspace.onLayoutReady(() => void this.applySettings());
@@ -74,8 +77,16 @@ export default class GitSyncPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
   }
 
-  /** 설정으로 GitManager/AutoSync 를 (재)구성하고 repo 를 보장한다. 설정 변경·리본·시작 시 호출. */
-  async applySettings(): Promise<void> {
+  /**
+   * 설정으로 GitManager/AutoSync 를 (재)구성하고 repo 를 보장한다. 설정 변경·리본·시작 시 호출.
+   * 동시/중첩 호출은 직렬화한다 — 두 GitManager 가 같은 `.git/index.lock` 에서 충돌하는 것 방지.
+   */
+  applySettings(): Promise<void> {
+    this.applyChain = this.applyChain.catch(() => undefined).then(() => this.applySettingsLocked());
+    return this.applyChain;
+  }
+
+  private async applySettingsLocked(): Promise<void> {
     this.autoSync?.stop();
 
     const base = this.getBasePath();

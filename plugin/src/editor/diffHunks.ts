@@ -32,10 +32,12 @@ export function parseUnifiedHunks(diff: string): DiffHunk[] {
       hunks.push(cur);
       continue;
     }
-    if (!cur) continue; // 헤더(diff/index/---/+++) 이전
-    if (line.startsWith('+') && !line.startsWith('+++')) {
+    if (!cur) continue; // 헤더(diff/index/---/+++)는 첫 @@ 이전(cur=null)이라 여기 안 옴
+    // hunk 본문: 단일 선두 문자로만 분류. 본문 내용이 '---'/'+++'(예: YAML fence, 구분선)여도
+    // '----'/'+++' 로 나타나므로 startsWith('---') 가드를 쓰면 오분류된다 → 쓰지 않는다.
+    if (line.startsWith('+')) {
       cur.addedCount++;
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
+    } else if (line.startsWith('-')) {
       cur.removedLines.push(line.slice(1));
     }
   }

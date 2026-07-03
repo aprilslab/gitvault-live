@@ -5,6 +5,7 @@ import { PromiseQueue } from './PromiseQueue';
 
 const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
 const GIT_BLOCK_TIMEOUT_MS = 20_000;
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리 sha (origin/main 부재 시 diff 기준)
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수
 const SAVE_RETRIES = 3;
 
@@ -108,12 +109,23 @@ export class GitManager {
     });
   }
 
-  /** wip 워킹트리 vs origin/main 변경 파일 (저장 미리보기). */
+  /**
+   * 저장 시 origin/main 에 반영될 변경 파일 (저장 미리보기).
+   * - origin/main 이 없으면 empty-tree 기준(첫 발행 부트스트랩) — 모든 추적 파일이 대상.
+   * - 아직 커밋 안 된 신규 노트(untracked)도 포함 — 저장(flushCommit=add -A)이 발행할 내용과 일치시킨다.
+   */
   outgoingFiles(): Promise<Array<{ status: string; path: string }>> {
     return this.queue.add(async () => {
-      if (!(await this.refExists('refs/remotes/origin/main'))) return [];
-      const out = await this.git.raw(['diff', '--name-status', '-z', 'origin/main']).catch(() => '');
-      return parseNameStatusZ(out);
+      const base = (await this.refExists('refs/remotes/origin/main')) ? 'origin/main' : EMPTY_TREE;
+      const diff = await this.git.raw(['diff', '--name-status', '-z', base]).catch(() => '');
+      const tracked = parseNameStatusZ(diff);
+      const seen = new Set(tracked.map((f) => f.path));
+      const othersZ = await this.git.raw(['ls-files', '--others', '--exclude-standard', '-z']).catch(() => '');
+      const untracked = othersZ
+        .split('\0')
+        .filter((p) => p.length > 0 && !seen.has(p))
+        .map((path) => ({ status: 'A', path }));
+      return [...tracked, ...untracked];
     });
   }
 

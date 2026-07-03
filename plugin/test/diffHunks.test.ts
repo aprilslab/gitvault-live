@@ -52,4 +52,13 @@ assert(
 assert(parseUnifiedHunks('diff --git a/x b/x\nindex 0..0\n--- a/x\n+++ b/x\n').length === 0, '변경없음=빈 배열');
 assert(parseUnifiedHunks('').length === 0, '빈 입력=빈 배열');
 
+// 회귀: 본문의 '---'/'-- ' 삭제 라인이 파일 헤더로 오분류되지 않아야 함 (YAML fence/구분선)
+const FENCE = ['--- a/n.md', '+++ b/n.md', '@@ -1,2 +0,0 @@', '----', '-- note', ''].join('\n');
+const fh = parseUnifiedHunks(FENCE);
+assert(fh.length === 1 && fh[0].newCount === 0, 'fence hunk 1개, 순수삭제');
+assert(
+  fh[0].removedLines.length === 2 && fh[0].removedLines[0] === '---' && fh[0].removedLines[1] === '- note',
+  "본문 '---'/'-- note' 삭제 라인 보존",
+);
+
 console.log('HUNKS OK');
