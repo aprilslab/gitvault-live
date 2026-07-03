@@ -1,4 +1,7 @@
-# obsidian-git-sync 구현 — Loop Queue
+> ⚠️ **v1(구버전) 큐 — 폐기.** SoT 를 GitHub(HTTPS+토큰)로 전환하며 플랜을 v2 로 재설계했다.
+> 현재 진행 상태·남은 작업·인계 절차는 [`../HANDOFF.md`](../HANDOFF.md) 참조. 이 파일은 히스토리로만 보존.
+
+# obsidian-git-sync 구현 — Loop Queue (v1, 폐기)
 
 > **이 파일이 루프의 메모리다.** 챗 히스토리는 iteration 사이 압축/소실될 수 있으니
 > 매 iteration은 이 파일 + [`../PLAN.md`](../PLAN.md)를 **다시 읽고** 시작한다. 큐가 진실의 원천.

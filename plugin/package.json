@@ -1,0 +1,24 @@
+{
+  "name": "obsidian-git-sync-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian 데스크톱 플러그인 — 백그라운드 git 자동 동기화 + 들어온 변경 인라인 표시 + 저장(squash-to-main).",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
+    "@types/node": "^22.0.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.6.0"
+  }
+}

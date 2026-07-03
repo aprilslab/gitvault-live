@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-git-sync",
+  "name": "Git Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "백그라운드에서 vault를 git으로 자동 동기화하고, 다른 참여자의 변경을 에디터에 인라인 표시합니다. 데스크톱 전용.",
+  "author": "obsidian-git-sync",
+  "isDesktopOnly": true
+}

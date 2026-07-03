@@ -1,0 +1,46 @@
+/* obsidian-git-sync 스타일 */
+
+.ogs-statusbar {
+  cursor: default;
+}
+.ogs-statusbar.mod-error {
+  color: var(--text-error);
+}
+.ogs-statusbar.mod-syncing {
+  color: var(--text-accent);
+}
+
+/* 협업 diff 패널 (Phase C) */
+.ogs-diff-panel {
+  padding: 0 8px;
+}
+.ogs-diff-section-title {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin: 12px 0 4px;
+}
+.ogs-diff-file {
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+.ogs-diff-file:hover {
+  background: var(--background-modifier-hover);
+}
+.ogs-diff-empty {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  padding: 4px 6px;
+}
+
+/* 인라인 데코레이션 (Phase C) */
+.ogs-incoming-line {
+  background: rgba(80, 160, 255, 0.12);
+}
+.ogs-incoming-ghost {
+  color: var(--text-accent);
+  opacity: 0.7;
+  font-style: italic;
+}
