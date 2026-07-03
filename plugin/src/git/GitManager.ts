@@ -117,6 +117,39 @@ export class GitManager {
     });
   }
 
+  /**
+   * 아직 내 wip 에 병합되지 않은 origin/main 의 변경 파일 (타 참여자 도착분).
+   * merge-base(HEAD, origin/main) → origin/main diff 이므로, 내가 이미 병합한 변경은 제외된다.
+   */
+  incomingFiles(): Promise<Array<{ status: string; path: string }>> {
+    return this.queue.add(async () => {
+      const base = await this.mergeBaseMain();
+      if (!base) return [];
+      const out = await this.git.raw(['diff', '--name-status', '-z', base, 'origin/main']).catch(() => '');
+      return parseNameStatusZ(out);
+    });
+  }
+
+  /**
+   * 활성 파일의 origin/main(old) 대비 로컬 워킹트리(new) unified diff (U0, context 0).
+   * CollabDecorations 의 hunk 파싱 소스. path 는 vault(=repo) 상대경로.
+   */
+  fileDiffVsMain(path: string): Promise<string> {
+    return this.queue.add(async () => {
+      if (!(await this.refExists('refs/remotes/origin/main'))) return '';
+      return this.git.raw(['diff', '--no-color', '-U0', 'origin/main', '--', path]).catch(() => '');
+    });
+  }
+
+  private async mergeBaseMain(): Promise<string | null> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) return null;
+    try {
+      return (await this.git.raw(['merge-base', 'HEAD', 'origin/main'])).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── 내부 ──────────────────────────────────────────────────────────────
 
   private async ensureRepoLocked(): Promise<void> {

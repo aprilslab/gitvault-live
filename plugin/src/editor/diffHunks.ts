@@ -1,0 +1,43 @@
+/**
+ * unified diff(`git diff -U0 origin/main -- <file>`) → hunk 목록 파서.
+ * origin/main(old) 대비 로컬 워킹트리(new)의 차이를 라인 단위로 표현한다.
+ * 순수 함수 — Obsidian/CM 비의존, 단위 테스트 대상.
+ */
+export interface DiffHunk {
+  /** 새 파일(로컬 워킹트리) 기준 시작 라인 (1-based). */
+  newStart: number;
+  /** 새 파일에서 이 hunk 가 차지하는 라인 수. 0 이면 순수 삭제(=로컬에 없는 incoming). */
+  newCount: number;
+  /** 로컬에만 있는(내 편집) 라인 수. */
+  addedCount: number;
+  /** origin/main 에만 있는(로컬에 없는) 라인들 = 도착 예정 내용. */
+  removedLines: string[];
+}
+
+const HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+
+export function parseUnifiedHunks(diff: string): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let cur: DiffHunk | null = null;
+
+  for (const line of diff.split('\n')) {
+    const m = HUNK_RE.exec(line);
+    if (m) {
+      cur = {
+        newStart: Number(m[1]),
+        newCount: m[2] === undefined ? 1 : Number(m[2]),
+        addedCount: 0,
+        removedLines: [],
+      };
+      hunks.push(cur);
+      continue;
+    }
+    if (!cur) continue; // 헤더(diff/index/---/+++) 이전
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      cur.addedCount++;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      cur.removedLines.push(line.slice(1));
+    }
+  }
+  return hunks;
+}

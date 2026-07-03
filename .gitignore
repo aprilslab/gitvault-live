@@ -8,6 +8,9 @@ main.js
 plugin/main.js
 *.js.map
 
+# test bundle output (esbuild)
+_bundle.cjs
+
 # secrets / local runtime
 .env
 .env.*
