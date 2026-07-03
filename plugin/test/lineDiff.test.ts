@@ -91,4 +91,24 @@ assert(diffLines('a\n', 'a').length === 0, "'a\\n' vs 'a' 동등");
   assert(h.length === 1 && h[0].newStart === 25_001 && h[0].newCount === 1, '5만 라인 중 1곳 편집 = 정밀 hunk');
 }
 
+import { alignLines, toLines } from '../src/editor/lineDiff';
+
+// alignLines: 전체 op 시퀀스 (0=공통, 1=old전용, 2=new전용)
+{
+  const a = toLines('x\ny\nz\n');
+  const b = toLines('x\nY\nz\n'); // 중간 치환
+  const ops = alignLines(a, b);
+  // 공통 x, (y→Y: -y +Y), 공통 z  → 0,1,2,0  (역추적 순서상 1이 2보다 먼저)
+  const removed = ops.filter((o) => o === 1).length;
+  const added = ops.filter((o) => o === 2).length;
+  const common = ops.filter((o) => o === 0).length;
+  assert(common === 2, `alignLines 공통 2 (got ${common})`);
+  assert(removed === 1 && added === 1, `alignLines -1 +1 (got -${removed} +${added})`);
+}
+{
+  const a = toLines('a\nb\n');
+  const b = toLines('a\nb\n');
+  assert(alignLines(a, b).every((o) => o === 0), 'alignLines 동일 → 전부 공통');
+}
+
 console.log('LINEDIFF OK');
