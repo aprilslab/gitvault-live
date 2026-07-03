@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, FileSystemAdapter, TFile } from 'obsidian';
+import { Plugin, MarkdownView, FileSystemAdapter, TFile, Notice } from 'obsidian';
 import type { EditorView } from '@codemirror/view';
 import {
   OgsSettings,
@@ -11,6 +11,7 @@ import { GitManager } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
 import { StatusBar } from './ui/StatusBar';
 import { DiffPanel, VIEW_TYPE_OGS_DIFF } from './ui/DiffPanel';
+import { SaveModal } from './ui/SaveModal';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
 import { parseUnifiedHunks } from './editor/diffHunks';
 
@@ -39,6 +40,7 @@ export default class GitSyncPlugin extends Plugin {
 
     this.addRibbonIcon('git-branch', 'Git Sync: 지금 동기화', () => void this.applySettings());
     this.addRibbonIcon('git-compare', 'Git Sync: 동시 편집 현황', () => void this.activateDiffPanel());
+    this.addRibbonIcon('save', 'Git Sync: 저장(공식본에 반영)', () => this.openSaveModal());
     this.addCommand({
       id: 'ogs-sync-now',
       name: '지금 동기화 / 다시 연결',
@@ -48,6 +50,11 @@ export default class GitSyncPlugin extends Plugin {
       id: 'ogs-open-diff-panel',
       name: '동시 편집 현황 패널 열기',
       callback: () => void this.activateDiffPanel(),
+    });
+    this.addCommand({
+      id: 'ogs-save',
+      name: '저장 — 공식본에 반영',
+      callback: () => this.openSaveModal(),
     });
 
     // 활성 노트 전환 시 데코레이션 재계산.
@@ -162,6 +169,14 @@ export default class GitSyncPlugin extends Plugin {
   private openPath(path: string): void {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  private openSaveModal(): void {
+    if (!this.git) {
+      new Notice('아직 연결되지 않았습니다 — 설정에서 저장소를 연결하세요.');
+      return;
+    }
+    new SaveModal(this.app, this.git, () => void this.refreshCollab()).open();
   }
 
   async loadSettings(): Promise<void> {
