@@ -1,6 +1,6 @@
 # E2E 검증 시나리오 (수동)
 
-자동 게이트(`tsc` + esbuild build + `daemon` smoke + `parseUnifiedHunks` 단위테스트)는 git 시퀀스와 순수 로직을 커버하지만, **CM6 인라인 데코레이션·패널·모달의 실제 렌더는 살아있는 Obsidian 이 필요**하다. 아래는 사람이 한 번 도는 절차.
+자동 게이트(`tsc` + esbuild build + `daemon` smoke + plugin `test:hunks`/`test:linediff`/`test:git` 단위·통합테스트)는 git 시퀀스와 순수 로직(diff·union·TOCTOU 연기 포함)을 커버하지만, **CM6 인라인 데코레이션·패널·모달의 실제 렌더는 살아있는 Obsidian 이 필요**하다. 아래는 사람이 한 번 도는 절차.
 
 ## 사전 준비
 
@@ -40,6 +40,31 @@
 2. 에이전트는 main 에 push, 사용자는 [저장].
 3. `git show origin/main:note.md` → **양쪽 내용 모두 존재**(union), 충돌 마커 없음.
    - ⚠️ union 한계는 [`CONFLICT-POLICY.md`](./CONFLICT-POLICY.md) (중복 제거 안 함, 같은 줄 동시 수정은 둘 다 남음).
+
+## 시나리오 4 — 타이핑 중 원격 변경 도착 (데이터 유실 회귀 방지)
+
+TOCTOU: 느린 fetch 동안 사용자가 계속 타이핑하면, merge 가 미저장 버퍼를 덮어써 소실되던 버그.
+
+1. 에이전트가 같은 `note.md` 를 반복 편집해 60s 사이클 2회 이상 걸쳐 `origin/main` 에 계속 push.
+2. 사용자는 그 노트에서 **끊지 않고 계속 타이핑**(각 사이클 경계를 걸쳐 입력 지속).
+3. 타이핑을 멈추고 5s(IDLE_MERGE_MS) 대기.
+   - ✅ 기대: 타이핑 중에는 워킹트리가 리로드되지 않아 **입력이 하나도 사라지지 않음**. 멈춘 뒤 다음
+     사이클에 union 병합돼 에이전트 변경이 본문에 반영. 상태바/로그에 "타이핑 감지 — merge 연기".
+
+## 시나리오 5 — union 미설정 기존 원격 adopt 후 동시 편집
+
+`*.md merge=union` 이 없는 **기존** 원격 repo 를 vault 로 adopt 한 경우에도 로컬이 소실되지 않아야 함.
+
+1. `.gitattributes` 없이 노트 몇 개가 있는 원격 repo 를 사용자 vault + 에이전트 vault 양쪽에 연결.
+2. 첫 연결 후 `git show origin/main:.gitattributes` → **`merge=union` 이 자동 시드·push** 됨 확인.
+3. 시나리오 3(같은 줄 동시 편집) 반복 → **양쪽 내용 공존**(원격 승 소실 없음).
+
+## 시나리오 6 — 인라인 표시 즉시성·성능
+
+1. `showInlineChanges` 켜기. main 과 다른 노트를 열고 **타이핑(엔터 포함)**.
+   - ✅ 기대: 입력 후 **~300ms 내** 변경 라인 하이라이트 갱신(디스크 저장/커밋을 기다리지 않음).
+   - ✅ 엔터로 빈 줄만 추가해도 해당 줄이 즉시 하이라이트(이전엔 디스크 미저장이라 누락되던 케이스).
+2. 1만 라인 이상 대형 노트에서 연속 타이핑 → 입력 지연(랙) 체감 없음.
 
 ## 통과 기준
 
