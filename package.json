@@ -1,0 +1,20 @@
+{
+  "name": "obsidian-git-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Git-based Obsidian vault sync — hermes daemon + desktop plugin. Union merge, squash-to-main, git hidden from non-developers.",
+  "license": "MIT",
+  "workspaces": [
+    "plugin",
+    "daemon"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:plugin": "npm run build -w plugin",
+    "build:daemon": "npm run build -w daemon",
+    "dev:plugin": "npm run dev -w plugin"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

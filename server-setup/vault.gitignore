@@ -1,0 +1,11 @@
+# 이 파일은 vault repo 루트에 .gitignore 로 설치된다.
+
+# Obsidian 설정 전체 제외.
+#  - workspace.json 등은 기기별 상태라 동기화하면 안 되고,
+#  - 나머지 설정 json 들은 union 병합이 불가능해(깨짐) 충돌원이 된다.
+#  - 기기 간 플러그인/설정 동기화 포기는 의도된 트레이드오프 (README 명시).
+.obsidian/
+
+# OS 잡동사니
+.DS_Store
+Thumbs.db

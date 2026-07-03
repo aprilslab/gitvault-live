@@ -1,5 +1,16 @@
 node_modules/
 dist/
-main.js
 *.log
 .DS_Store
+
+# plugin build output (esbuild → plugin/main.js)
+main.js
+plugin/main.js
+*.js.map
+
+# secrets / local runtime
+.env
+.env.*
+*.key
+id_ed25519
+id_ed25519.pub

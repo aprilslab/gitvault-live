@@ -1,0 +1,9 @@
+# 이 파일은 vault repo 루트에 .gitattributes 로 설치된다 (bare repo 초기 커밋에 포함).
+
+# markdown 충돌은 union 병합 — 양쪽 hunk 를 모두 채택한다.
+# 주의: 중복 제거는 하지 않는다(양쪽이 같은 문단을 붙이면 두 번 들어간다). docs/CONFLICT-POLICY.md 참조.
+*.md merge=union
+
+# 텍스트 파일 줄바꿈을 LF 로 정규화 — Linux(hermes) ↔ macOS 혼합에서 union 오작동/불필요 diff 방지.
+# text=auto 이므로 바이너리는 자동 예외 처리된다.
+* text=auto eol=lf
