@@ -169,6 +169,7 @@ export default class GitSyncPlugin extends Plugin {
       basePath: base,
       authedRemote,
       deviceId: this.settings.deviceId,
+      displayName: this.settings.displayName,
       flushEditors,
       log: (m) => console.error('[obsidian-git-sync]', m),
     });

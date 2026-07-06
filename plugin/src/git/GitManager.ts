@@ -22,6 +22,8 @@ export interface GitManagerOptions {
   authedRemote: string;
   /** 커밋 identity 및 wip 브랜치 이름에 쓰이는 안정적 기기 식별자. */
   deviceId: string;
+  /** 협업 표시이름(커밋 author.name). 비우면 deviceId. */
+  displayName?: string;
   /** commit/merge 직전 열린 에디터의 미저장 버퍼를 디스크로 flush. AutoSync 가 주입. */
   flushEditors?: () => Promise<void>;
   log?: (msg: string) => void;
@@ -40,6 +42,7 @@ export class GitManager {
   private readonly git: SimpleGit;
   private readonly queue = new PromiseQueue();
   private readonly deviceId: string;
+  private readonly displayName: string;
   private readonly wipRef: string;
   private readonly flushEditors: () => Promise<void>;
   private readonly log: (msg: string) => void;
@@ -50,6 +53,7 @@ export class GitManager {
   constructor(private readonly opts: GitManagerOptions) {
     this.git = simpleGit(opts.basePath, { timeout: { block: GIT_BLOCK_TIMEOUT_MS } });
     this.deviceId = opts.deviceId;
+    this.displayName = opts.displayName?.trim() || opts.deviceId;
     this.wipRef = `wip/${opts.deviceId}`;
     this.flushEditors = opts.flushEditors ?? (async () => undefined);
     this.log = opts.log ?? (() => undefined);
@@ -247,7 +251,7 @@ export class GitManager {
     const isRepo = await this.git.checkIsRepo().catch(() => false);
     if (!isRepo) await this.git.init();
 
-    await this.git.addConfig('user.name', this.deviceId);
+    await this.git.addConfig('user.name', this.displayName);
     await this.git.addConfig('user.email', `${this.deviceId}@${IDENTITY_EMAIL_DOMAIN}`);
     // 비-ASCII(한글) 파일명이 status 에서 C-quote 되지 않도록 — 파싱/pathspec 정확성 필수.
     await this.git.addConfig('core.quotePath', 'false');

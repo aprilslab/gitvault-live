@@ -111,6 +111,27 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // --- identity: displayName 이 커밋 author.name 이 된다 ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-ident-'));
+      const bare = initBare(root, 'id.git');
+      const local = join(root, 'local');
+      mkdirSync(local, { recursive: true });
+      const gm = new GitManager({
+        basePath: local,
+        authedRemote: bare,
+        deviceId: 'dev-xyz',
+        displayName: '홍길동',
+        flushEditors: async () => undefined,
+      });
+      await gm.ensureRepo();
+      writeFileSync(join(local, 'a.md'), '내용\n');
+      await gm.commitAndPushWip();
+      const an = execFileSync('git', ['-C', local, 'log', '-1', '--format=%an'], { encoding: 'utf8' }).trim();
+      assert(an === '홍길동', `author.name=displayName (got ${an})`);
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });
