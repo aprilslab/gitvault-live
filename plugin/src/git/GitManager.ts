@@ -30,22 +30,26 @@ export interface GitManagerOptions {
 }
 
 /**
- * 플러그인용 vault git 클라이언트 (원본 daemon committer 의 wip/squash 모델 이식).
- * - commitAndPushWip: 편집 → wip/<device> 커밋·푸시
- * - syncDown: origin/main → wip union 병합 (타 참여자 변경 수신)
- * - squashMergeToMain: wip 를 origin/main 위 1커밋으로 squash (checkout 없는 plumbing)
+ * 플러그인용 vault git 클라이언트 (ephemeral wip 생명주기 모델).
+ * - commitAndPushWip: 편집 → 세션 wip(`wip/<device>/<ts>`) lazy-fork 커밋·푸시
+ * - syncDown: origin/main → (편집중이면 wip union / idle 이면 ff) 병합 (타 참여자 변경 수신)
+ * - squashMergeToMain: merged tree 를 origin/main 위 1커밋으로 squash push 후 main 으로 복귀·wip 삭제
  *
- * 불변식: 로컬 main 없음(항상 wip 체크아웃). 모든 git op 는 PromiseQueue 로 직렬화.
- * 워킹트리를 쓰는 op(merge/adopt)는 suppress 로 감싸 이벤트 피드백 루프를 차단한다.
+ * 세션 상태(`currentWip`): null=idle(로컬 `main` 체크아웃), 문자열=편집중(그 wip 체크아웃).
+ * 로드 시 origin/main 위로 main 을 맞추고(워킹트리 보존) 자기 소유 wip(레거시·잔여 세션)를 정리한다.
+ * 모든 git op 는 PromiseQueue 로 직렬화. 워킹트리를 쓰는 op(merge/adopt/main 전환)는 suppress 로
+ * 감싸 이벤트 피드백 루프를 차단한다.
  */
 export class GitManager {
   private readonly git: SimpleGit;
   private readonly queue = new PromiseQueue();
   private readonly deviceId: string;
   private readonly displayName: string;
-  private readonly wipRef: string;
   private readonly flushEditors: () => Promise<void>;
   private readonly log: (msg: string) => void;
+
+  /** 세션 상태: null=idle(로컬 main), 문자열=편집중 wip 브랜치명. */
+  private currentWip: string | null = null;
 
   private suppressDepth = 0;
   private suppressGraceUntil = 0;
@@ -54,7 +58,6 @@ export class GitManager {
     this.git = simpleGit(opts.basePath, { timeout: { block: GIT_BLOCK_TIMEOUT_MS } });
     this.deviceId = opts.deviceId;
     this.displayName = opts.displayName?.trim() || opts.deviceId;
-    this.wipRef = `wip/${opts.deviceId}`;
     this.flushEditors = opts.flushEditors ?? (async () => undefined);
     this.log = opts.log ?? (() => undefined);
   }
@@ -68,12 +71,12 @@ export class GitManager {
     return this.deviceId;
   }
 
-  /** repo 보장: init/clone, identity·quotePath 설정, remote 갱신, wip 체크아웃(adopt/seed). */
+  /** repo 보장: init/clone, identity·quotePath 설정, remote 갱신, main 정렬(adopt/seed) + 자기 wip 정리. */
   ensureRepo(): Promise<void> {
     return this.queue.add(() => this.ensureRepoLocked());
   }
 
-  /** wip/<device> 로 커밋·푸시 (직렬화). */
+  /** 세션 wip(`wip/<device>/<ts>`, 최초 변경 시 fork)로 커밋·푸시 (직렬화). */
   commitAndPushWip(): Promise<'pushed' | 'nochange'> {
     return this.queue.add(async () => {
       const committed = await this.flushCommit();
@@ -264,12 +267,73 @@ export class GitManager {
     }
     await this.git.fetch(['origin', '--prune']).catch((e) => this.log(`초기 fetch 실패: ${redact(e)}`));
     await this.suppressed(async () => {
-      await this.ensureWipBranch();
-      // 모든 경로(adopt/기존 wip/빈 원격 seed)에서 union 드라이버를 보장 — 없으면 .md 충돌이
+      await this.ensureOnMain();
+      await this.deleteOwnWips(); // main 체크아웃(또는 adopt wip) 후라 안전(현재 브랜치 아님)
+      // 모든 경로(adopt/빈 원격 seed/idle)에서 union 드라이버를 보장 — 없으면 .md 충돌이
       // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. writeIfAbsent 라 기존 파일은 존중.
       this.seedRepoFiles();
     });
     this.warnIfNoUnion();
+  }
+
+  /** 세션 유니크 wip 브랜치명. */
+  private newWipRef(): string {
+    return `wip/${this.deviceId}/${Date.now()}`;
+  }
+
+  /** 자기 소유 wip(영속 `wip/<device>` + ts형 `wip/<device>/*`) 로컬·원격 삭제. best-effort. */
+  private async deleteOwnWips(): Promise<void> {
+    const own = `wip/${this.deviceId}`;
+    const isOwn = (name: string): boolean => name === own || name.startsWith(`${own}/`);
+    const localBranches = await this.git.branchLocal().catch(() => ({ all: [] as string[] }));
+    for (const b of localBranches.all) {
+      // 현재 체크아웃 브랜치(adopt 세션 wip)는 `branch -D` 가 실패 → catch 로 살아남음(의도).
+      if (isOwn(b)) await this.git.raw(['branch', '-D', b]).catch(() => undefined);
+    }
+    const remote = await this.git.branch(['-r']).catch(() => ({ all: [] as string[] }));
+    for (const r of remote.all) {
+      const name = r.replace(/^origin\//, '');
+      if (isOwn(name)) {
+        await this.git.raw(['push', 'origin', '--delete', name]).catch((e) => this.log(`원격 wip 삭제 실패: ${redact(e)}`));
+      }
+    }
+  }
+
+  /**
+   * origin/main 위로 로컬 main 이동(워킹트리 미변경). 로컬 변경분이 있으면 새 wip 로 adopt.
+   *
+   * status 판정은 `checkout-index -a`(원격 전용 파일 실체화) **이후** 수행한다 — 그래야 방금 clone 해
+   * 워킹트리가 비어 있는 fresh 케이스가 "삭제됨" 오탐으로 adopt 되지 않고 idle(main)로 남는다.
+   * 실제 로컬 변경(신규/수정)은 이미 index 에 stage 되어 checkout-index 후에도 status 에 그대로 잡힌다.
+   */
+  private async ensureOnMain(): Promise<void> {
+    if (!(await this.refExists('refs/remotes/origin/main'))) {
+      await this.git.raw(['checkout', '-B', 'main']); // 빈 원격 부트스트랩
+      this.currentWip = null;
+      return;
+    }
+    // main 을 origin/main 으로 맞춘다. main 이 이미 체크아웃돼 있으면 `branch -f` 가 거부되므로
+    // reset 으로 이동(unborn/born 공통), 아니면 branch -f + symbolic-ref 로 전환. 워킹트리는 두 경로 모두 보존.
+    const onMain =
+      (await this.git.raw(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim() === 'refs/heads/main';
+    if (onMain) {
+      await this.git.raw(['reset', '--mixed', 'origin/main']);
+    } else {
+      await this.git.raw(['branch', '-f', 'main', 'origin/main']);
+      await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+      await this.git.raw(['reset', '--mixed']);
+    }
+    await this.git.raw(['add', '--ignore-removal', '--', '.']); // 로컬 신규/수정만 stage(삭제는 무시)
+    await this.git.raw(['checkout-index', '-a']); // 원격 전용 파일 실체화(워킹트리 보존)
+    const status = (await this.git.raw(['status', '--porcelain'])).trim();
+    if (status) {
+      // 로컬 미저장 변경 → 즉시 편집 세션(adopt): 새 wip 로 커밋
+      this.currentWip = this.newWipRef();
+      await this.git.raw(['checkout', '-b', this.currentWip]);
+      await this.git.commit(`adopt: ${nowIso()}`);
+    } else {
+      this.currentWip = null;
+    }
   }
 
   /** 기존 .gitattributes 에 union 드라이버가 없으면 경고만(공유 설정 파일이라 내용 변조는 안 함). */
@@ -284,58 +348,46 @@ export class GitManager {
     }
   }
 
-  private async ensureWipBranch(): Promise<void> {
-    const local = await this.git.branchLocal().catch(() => ({ all: [] as string[] }));
-    if (local.all.includes(this.wipRef)) {
-      await this.git.raw(['checkout', this.wipRef]);
-      return;
-    }
-    if (await this.refExists('refs/remotes/origin/main')) {
-      // origin/main 위에 wip 을 만들되 워킹트리를 덮지 않는다(기존 vault 온보딩 크래시 방지).
-      // 로컬 파일은 index 로 흡수, 원격 전용 파일만 워킹트리로 실체화.
-      await this.git.raw(['branch', '-f', this.wipRef, 'origin/main']);
-      await this.git.raw(['symbolic-ref', 'HEAD', `refs/heads/${this.wipRef}`]);
-      await this.git.raw(['reset', '--mixed']);
-      await this.git.raw(['add', '--ignore-removal', '--', '.']);
-      const status = await this.git.raw(['status', '--porcelain']);
-      if (status.trim()) await this.git.commit(`adopt: ${nowIso()}`);
-      await this.git.raw(['checkout-index', '-a']);
-    } else {
-      await this.git.raw(['checkout', '-B', this.wipRef]);
-      // seed 파일은 ensureRepoLocked 가 모든 경로 공통으로 생성한다.
-    }
-  }
-
   /** seed 파일 보장: .gitattributes(union) + .gitignore. 기존 파일은 존중(wx). 모든 연결 경로에서 호출. */
   private seedRepoFiles(): void {
     writeIfAbsent(this.opts.basePath, '.gitattributes', '*.md merge=union\n* text=auto eol=lf\n');
     writeIfAbsent(this.opts.basePath, '.gitignore', '.obsidian/\n.DS_Store\nThumbs.db\n');
   }
 
-  /** flush: 에디터 저장 → add -A → 변경 없으면 skip(이벤트 루프 종결자), 있으면 커밋. 커밋 여부 반환. */
+  /**
+   * flush: 에디터 저장 → add -A → 변경 없으면 skip(이벤트 루프 종결자), 있으면 커밋. 커밋 여부 반환.
+   * 첫 변경(currentWip===null)이면 현 HEAD(main) 기준으로 세션 wip 을 lazy-fork 한다.
+   */
   private async flushCommit(): Promise<boolean> {
     await this.flushEditors();
     await this.git.add(['-A']);
     const status = await this.git.raw(['status', '--porcelain']);
     if (!status.trim()) return false;
+    if (this.currentWip === null) {
+      this.currentWip = this.newWipRef();
+      await this.git.raw(['checkout', '-b', this.currentWip]); // 현 HEAD(main) 기준 fork
+    }
     await this.git.commit(`${this.deviceId}: ${nowIso()}`);
     return true;
   }
 
+  /** 세션 wip 을 원격에 push. idle(변경 전무)이면 no-op. 유니크 세션 브랜치라 평범한 push. */
   private async pushWip(): Promise<void> {
-    const spec = `HEAD:refs/heads/${this.wipRef}`;
-    try {
-      await this.git.raw(['push', 'origin', spec]); // 평시 fast-forward
-    } catch {
-      // 저장 후 reset --soft 한 wip 은 원격과 sibling(비-ff) → force-with-lease 로 재정렬.
-      // 단일 작성자 전제라 lease 어긋나면(타 작성자) 시끄럽게 실패하는 게 옳다.
-      await this.git.raw(['push', '--force-with-lease', 'origin', spec]);
-    }
+    if (this.currentWip === null) return;
+    await this.git.raw(['push', 'origin', `HEAD:refs/heads/${this.currentWip}`]);
   }
 
-  /** origin/main 을 wip 로 병합. .md 는 union, 그 외 -X theirs. 잔여 충돌은 폴백. */
+  /**
+   * origin/main 을 아래로 병합.
+   * - idle(currentWip null): 로컬 커밋이 없어 `merge --ff-only` 로 origin/main 을 그대로 따라간다.
+   * - 편집중: wip 로 union 병합(.md union, 그 외 -X theirs). 잔여 충돌은 폴백.
+   */
   private async mergeDown(): Promise<void> {
     if (!(await this.refExists('refs/remotes/origin/main'))) return;
+    if (this.currentWip === null) {
+      await this.git.raw(['merge', '--ff-only', 'origin/main']).catch(() => undefined); // idle: 로컬 커밋 없어 ff
+      return;
+    }
     try {
       await this.git.raw(['merge', '-X', 'theirs', '--no-edit', 'origin/main']);
     } catch {
@@ -367,18 +419,22 @@ export class GitManager {
 
   private async saveLocked(): Promise<'saved' | 'nochange'> {
     await this.flushCommit();
+    if (this.currentWip === null) return 'nochange'; // 편집 전무
     for (let attempt = 0; attempt < SAVE_RETRIES; attempt++) {
       await this.git.fetch(['origin', '--prune']).catch(() => undefined);
-      await this.suppressed(() => this.mergeDown());
+      await this.suppressed(() => this.mergeDown()); // 타 참여자 저장분을 squash 전에 흡수(union)
 
       const tree = (await this.git.raw(['rev-parse', 'HEAD^{tree}'])).trim();
       const mainTree = (await this.refExists('refs/remotes/origin/main'))
         ? (await this.git.raw(['rev-parse', 'origin/main^{tree}'])).trim()
         : null;
-      if (tree === mainTree) return 'nochange'; // 변경 없음 → 빈 저장 방지
+      if (tree === mainTree) {
+        await this.suppressed(() => this.finishToMain(null)); // 변경 없음 — wip 만 정리하고 main 으로
+        return 'nochange';
+      }
 
       const parent = mainTree ? ['-p', 'origin/main'] : [];
-      const msg = `저장: ${this.deviceId} ${nowIso()}`;
+      const msg = `저장: ${this.displayName} ${nowIso()}`;
       const commit = (await this.git.raw(['commit-tree', tree, ...parent, '-m', msg])).trim();
 
       try {
@@ -389,11 +445,24 @@ export class GitManager {
         continue;
       }
 
-      await this.git.raw(['reset', '--soft', commit]); // wip 포인터만 이동, 워킹트리·mtime 무변경
-      await this.pushWip();
+      await this.suppressed(() => this.finishToMain(commit));
       return 'saved';
     }
     return 'nochange';
+  }
+
+  /** wip 종료: main 을 target(또는 origin/main)으로 두고 HEAD=main(워킹트리 미변경), 현 wip 삭제. */
+  private async finishToMain(commit: string | null): Promise<void> {
+    const wip = this.currentWip;
+    const target = commit ?? (await this.git.raw(['rev-parse', 'origin/main'])).trim();
+    await this.git.raw(['branch', '-f', 'main', target]);
+    await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await this.git.raw(['reset', '--mixed']); // tree 동일 → 파일·mtime 무변경
+    this.currentWip = null;
+    if (wip) {
+      await this.git.raw(['branch', '-D', wip]).catch(() => undefined);
+      await this.git.raw(['push', 'origin', '--delete', wip]).catch((e) => this.log(`원격 wip 삭제 실패: ${redact(e)}`));
+    }
   }
 
   private async refExists(ref: string): Promise<boolean> {

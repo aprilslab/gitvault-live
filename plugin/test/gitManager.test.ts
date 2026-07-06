@@ -132,6 +132,55 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // --- ephemeral wip 생명주기 ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-life-'));
+      const bare = initBare(root, 'life.git');
+      // 원격 main 부트스트랩(외부 커밋)
+      pushToMain(root, bare, { 'seed.md': 'seed\n' });
+      const local = join(root, 'local');
+      mkdirSync(local, { recursive: true });
+      const gm = newManager(local, bare, 'dev-A');
+      await gm.ensureRepo();
+
+      // 로드 직후 idle: HEAD=main, wip 없음
+      const head0 = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(head0 === 'main', `idle HEAD=main (got ${head0})`);
+
+      // 편집 → commitAndPushWip: wip/<device>/<ts> fork + push
+      writeFileSync(join(local, 'note.md'), '첫 줄\n');
+      await gm.commitAndPushWip();
+      const headWip = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(/^wip\/dev-A\/\d+$/.test(headWip), `편집 시 HEAD=wip/dev-A/<ts> (got ${headWip})`);
+      const remoteWips = execFileSync('git', ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A/*'], { encoding: 'utf8' }).trim();
+      assert(remoteWips.includes(headWip), '원격에 wip 푸시됨');
+
+      // 저장 → origin main 1커밋(squash) + wip 삭제(로컬+원격) + HEAD=main
+      const save = await gm.squashMergeToMain();
+      assert(save === 'saved', `저장 saved (got ${save})`);
+      const headAfter = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(headAfter === 'main', `저장 후 HEAD=main (got ${headAfter})`);
+      const localWips = execFileSync('git', ['-C', local, 'branch', '--list', 'wip/*'], { encoding: 'utf8' }).trim();
+      assert(localWips === '', `로컬 wip 삭제됨 (got '${localWips}')`);
+      const remoteWips2 = execFileSync('git', ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A/*'], { encoding: 'utf8' }).trim();
+      assert(remoteWips2 === '', '원격 wip 삭제됨');
+      // origin main 에 note.md 반영 + 커밋 1개 추가(squash)
+      const noteOnMain = execFileSync('git', ['-C', local, 'show', 'origin/main:note.md'], { encoding: 'utf8' });
+      assert(noteOnMain.includes('첫 줄'), 'origin main 에 저장 내용 반영');
+
+      // 마이그레이션: 기존 영속 wip/<device> 가 있으면 로드 시 삭제
+      execFileSync('git', ['-C', local, 'branch', 'wip/dev-A', 'main']); // 레거시 영속 브랜치 모사
+      execFileSync('git', ['-C', local, 'push', '-q', 'origin', 'wip/dev-A']);
+      const gm2 = newManager(local, bare, 'dev-A');
+      await gm2.ensureRepo();
+      const legacyLocal = execFileSync('git', ['-C', local, 'branch', '--list', 'wip/dev-A'], { encoding: 'utf8' }).trim();
+      assert(legacyLocal === '', '레거시 로컬 wip/dev-A 삭제됨');
+      const legacyRemote = execFileSync('git', ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A'], { encoding: 'utf8' }).trim();
+      assert(legacyRemote === '', '레거시 원격 wip/dev-A 삭제됨');
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });
