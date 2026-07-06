@@ -16,6 +16,7 @@ _relative.cjs
 _blame.cjs
 _multiauthor.cjs
 _peer.cjs
+_peerwip.cjs
 
 # secrets / local runtime
 .env
