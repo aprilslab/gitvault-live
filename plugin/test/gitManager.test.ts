@@ -211,13 +211,21 @@ async function main(): Promise<void> {
       const content = await gm.peerWipContent(peers[0].ref, 'note.md');
       assert(content !== null && content.includes('영희 작업중'), 'peer wip 파일 내용 읽음');
 
-      // 자기 wip 는 제외 — dev-A 가 편집 후 push
+      // 자기 wip 는 제외 — dev-A 가 편집 후 push. 같은 gm 인스턴스로 검증한다(ensureRepo 재호출 금지):
+      // ensureRepo → deleteOwnWips 가 자기 wip 를 원격/로컬에서 지워버려, 지운 뒤 필터를 걸면
+      // 애초에 걸러낼 대상이 없어 검증이 무의미해진다(회귀를 못 잡음).
       writeFileSync(join(local, 'note.md'), '공용\n내 편집\n');
       await gm.commitAndPushWip();
-      const gm2 = newManager(local, bare, 'dev-A');
-      await gm2.ensureRepo();
-      const peers2 = await gm2.listPeerWips();
+      const ownWipRemote = execFileSync(
+        'git',
+        ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A/*'],
+        { encoding: 'utf8' },
+      ).trim();
+      assert(ownWipRemote !== '', '자기 wip 가 원격에 살아있음(제외 필터 검증 전제)');
+
+      const peers2 = await gm.listPeerWips();
       assert(peers2.every((p) => p.device !== 'dev-A'), '자기 wip 제외');
+      assert(peers2.some((p) => p.device === 'dev-B'), 'dev-B peer 는 여전히 보임(빈 배열이라 통과한 게 아님)');
 
       rmSync(root, { recursive: true, force: true });
     }
