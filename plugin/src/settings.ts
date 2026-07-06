@@ -18,6 +18,8 @@ export interface OgsSettings {
   showInlineChanges: boolean;
   /** 라인 작성자(blame) 거터 표시. 커맨드 ogs-toggle-line-blame 로 토글. */
   showLineBlame: boolean;
+  /** 협업 표시이름(blame·작성중 배지에 노출). 비우면 deviceId 사용. git user.name 으로 쓰임. */
+  displayName: string;
 }
 
 export const DEFAULT_SETTINGS: OgsSettings = {
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: OgsSettings = {
   autoSyncSeconds: 5,
   showInlineChanges: false,
   showLineBlame: true,
+  displayName: '',
 };
 
 function slug(s: string): string {
@@ -160,6 +163,20 @@ export class GitSyncSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           await this.plugin.applySettings();
         }),
+      );
+
+    new Setting(containerEl)
+      .setName('표시 이름')
+      .setDesc('blame·작성 중 배지에 보일 이름(예: 홍길동). 비우면 기기 ID를 사용합니다.')
+      .addText((t) =>
+        t
+          .setPlaceholder('(비움 = 기기 ID)')
+          .setValue(s.displayName)
+          .onChange(async (v) => {
+            s.displayName = v.trim();
+            await this.plugin.saveSettings();
+            await this.plugin.applySettings(); // identity 재설정 반영
+          }),
       );
 
     new Setting(containerEl)
