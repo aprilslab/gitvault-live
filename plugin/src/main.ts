@@ -253,6 +253,7 @@ export default class GitSyncPlugin extends Plugin {
    */
   private async refreshActiveDecorations(): Promise<void> {
     if (!this.git) return;
+    const git = this.git; // await 넘어 좁혀진 타입 유실 방지용 로컬 바인딩
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.file) return;
     const cm = editorViewOf(view);
@@ -265,19 +266,19 @@ export default class GitSyncPlugin extends Plugin {
     try {
       let base = this.mainCache.get(path);
       if (base === undefined) {
-        base = await this.git.mainFileContent(path);
+        base = await git.mainFileContent(path);
         this.mainCache.set(path, base);
       }
-      // (a) 내 편집 하이라이트: origin/main 대비 내가 추가/변경한 줄(newCount>0 훅만)
-      const mineHunks = base === null ? [] : diffLines(base, cm.state.doc.toString()).filter((h) => h.newCount > 0);
-      // (b) 작성 중 배지: 타 참여자 wip 내용 vs 내 버퍼 (git 호출은 sync 때만; 여기선 캐시)
       const buffer = cm.state.doc.toString();
+      // (a) 내 편집 하이라이트: origin/main 대비 내가 추가/변경한 줄(newCount>0 훅만)
+      const mineHunks = base === null ? [] : diffLines(base, buffer).filter((h) => h.newCount > 0);
+      // (b) 작성 중 배지: 타 참여자 wip 내용 vs 내 버퍼 (git 호출은 sync 때만; 여기선 캐시)
       const peers: { author: string; content: string }[] = [];
       for (const p of this.peerWips) {
         const cacheKey = `${p.ref}\0${path}`;
         let content = this.peerContentCache.get(cacheKey);
         if (content === undefined) {
-          content = this.git ? await this.git.peerWipContent(p.ref, path) : null;
+          content = await git.peerWipContent(p.ref, path);
           this.peerContentCache.set(cacheKey, content);
         }
         if (content !== null) peers.push({ author: p.author, content });

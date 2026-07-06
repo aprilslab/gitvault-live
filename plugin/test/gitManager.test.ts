@@ -136,8 +136,13 @@ async function main(): Promise<void> {
     {
       const root = mkdtempSync(join(tmpdir(), 'ogs-life-'));
       const bare = initBare(root, 'life.git');
-      // 원격 main 부트스트랩(외부 커밋)
-      pushToMain(root, bare, { 'seed.md': 'seed\n' });
+      // 원격 main 부트스트랩(외부 커밋). config(seed) 가 이미 발행된 성숙한 공유 vault 를 모사한다 —
+      // 그래야 최초 로드가 idle(디스크==origin/main)로 남는다. seed 내용은 seedRepoFiles() 와 정확히 일치.
+      pushToMain(root, bare, {
+        'seed.md': 'seed\n',
+        '.gitattributes': '*.md merge=union\n* text=auto eol=lf\n',
+        '.gitignore': '.obsidian/\n.DS_Store\nThumbs.db\n',
+      });
       const local = join(root, 'local');
       mkdirSync(local, { recursive: true });
       const gm = newManager(local, bare, 'dev-A');
@@ -226,6 +231,113 @@ async function main(): Promise<void> {
       const peers2 = await gm.listPeerWips();
       assert(peers2.every((p) => p.device !== 'dev-A'), '자기 wip 제외');
       assert(peers2.some((p) => p.device === 'dev-B'), 'dev-B peer 는 여전히 보임(빈 배열이라 통과한 게 아님)');
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    // --- [CRITICAL] clean-behind 재연결: 앱이 닫힌 사이 팀원이 저장해 origin/main 만 앞선 뒤 ---
+    // 재연결해도 팀원 저장분이 되돌려지지 않고, 로컬 미저장 편집으로 오탐되어 adopt 되지 않는다.
+    // 이 케이스는 ensureOnMain 이 (버그처럼) origin/main 으로 먼저 advance 후 status 를 보면 실패한다.
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-cb-'));
+      const bare = initBare(root, 'cb.git');
+      pushToMain(root, bare, { 'note.md': 'v0\n' }); // origin/main 부트스트랩
+      const vaultA = join(root, 'vaultA');
+      mkdirSync(vaultA, { recursive: true });
+
+      // dev-A: 최초 로드 → 편집 → 저장 (로컬 main == origin/main == v1, union 드라이버 발행)
+      const gA = newManager(vaultA, bare, 'dev-A');
+      await gA.ensureRepo();
+      writeFileSync(join(vaultA, 'note.md'), 'v1\n');
+      await gA.commitAndPushWip();
+      const saved = await gA.squashMergeToMain();
+      assert(saved === 'saved', `dev-A v1 저장 (got ${saved})`);
+      assert(
+        execFileSync('git', ['-C', bare, 'show', 'main:note.md'], { encoding: 'utf8' }).trim() === 'v1',
+        'origin/main == v1(dev-A 저장분)',
+      );
+
+      // 팀원(외부 clone)이 v2 를 origin/main 에 push — 그 사이 dev-A 앱은 닫혀 있었다
+      pushToMain(root, bare, { 'note.md': 'v2\n' });
+
+      // dev-A 재연결: 새 GitManager, 같은 디렉토리, 로컬 편집 없음(clean, 단지 뒤처짐)
+      const gA2 = newManager(vaultA, bare, 'dev-A');
+      await gA2.ensureRepo();
+
+      // (a) 디스크 파일 == v2 (팀원 저장분 실체화)
+      assert(
+        readFileSync(join(vaultA, 'note.md'), 'utf8').trim() === 'v2',
+        '재연결 후 디스크==v2(팀원 저장분 실체화)',
+      );
+      // (b) HEAD == main (idle)
+      const head = execFileSync('git', ['-C', vaultA, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(head === 'main', `재연결 후 HEAD=main (got ${head})`);
+      // (c) wip 미생성 (adopt 오탐 없음)
+      const wips = execFileSync('git', ['-C', vaultA, 'branch', '--list', 'wip/*'], { encoding: 'utf8' }).trim();
+      assert(wips === '', `재연결 시 wip 미생성 (got '${wips}')`);
+      // (d) origin(bare)/main 여전히 == v2 (되돌려지지 않음)
+      assert(
+        execFileSync('git', ['-C', bare, 'show', 'main:note.md'], { encoding: 'utf8' }).trim() === 'v2',
+        'origin/main 여전히 v2(되돌려지지 않음)',
+      );
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    // --- 오프라인 편집 + 팀원 진행: 재연결 adopt → 저장 시 양쪽 변경 공존(union, 유실 없음) ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-oe-'));
+      const bare = initBare(root, 'oe.git');
+      pushToMain(root, bare, { 'seed.md': 'x\n' }); // origin 부트스트랩(note 없음)
+      const vault = join(root, 'vault');
+      mkdirSync(vault, { recursive: true });
+
+      // dev-A: baseline v1 저장 (note = L1/L2/L3), union 드라이버 발행
+      const g = newManager(vault, bare, 'dev-A');
+      await g.ensureRepo();
+      writeFileSync(join(vault, 'note.md'), 'L1\nL2\nL3\n');
+      await g.commitAndPushWip();
+      await g.squashMergeToMain();
+
+      // 오프라인 편집: L1 변경, 저장하지 않음(디스크만) — 이후 팀원이 다른 줄(L3) 변경분 v2 push
+      writeFileSync(join(vault, 'note.md'), 'L1-A\nL2\nL3\n');
+      pushToMain(root, bare, { 'note.md': 'L1\nL2\nL3-PEER\n' });
+
+      // dev-A 재연결 → dirty(디스크 vs base v1) → adopt
+      const g2 = newManager(vault, bare, 'dev-A');
+      await g2.ensureRepo();
+      const head = execFileSync('git', ['-C', vault, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(/^wip\/dev-A\/\d+$/.test(head), `오프라인 편집 → adopt(HEAD=wip) (got ${head})`);
+
+      // 저장 → union: 내 L1 편집과 팀원 L3 편집이 모두 origin/main 에 반영(둘 다 유실 없음)
+      const saved = await g2.squashMergeToMain();
+      assert(saved === 'saved', `union 저장 saved (got ${saved})`);
+      const merged = execFileSync('git', ['-C', bare, 'show', 'main:note.md'], { encoding: 'utf8' });
+      assert(merged.includes('L1-A'), `origin/main 에 내 오프라인 편집 보존 (${JSON.stringify(merged)})`);
+      assert(merged.includes('L3-PEER'), `origin/main 에 팀원 편집 보존 (${JSON.stringify(merged)})`);
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    // --- .obsidian/ 은 추적되지 않는다: seed .gitignore 가 add 이전에 배치되므로 adopt 커밋에 새지 않음 ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-obs-'));
+      const bare = initBare(root, 'obs.git');
+      pushToMain(root, bare, { 'note.md': 'base\n' }); // 기존 원격(.gitignore 미보유) — 첫 init 케이스
+      const vault = join(root, 'vault');
+      mkdirSync(join(vault, '.obsidian'), { recursive: true });
+      writeFileSync(join(vault, '.obsidian', 'workspace.json'), '{"x":1}\n'); // vault 로컬 obsidian 상태
+
+      const g = newManager(vault, bare, 'dev-A');
+      await g.ensureRepo();
+      writeFileSync(join(vault, 'note.md'), 'edited\n');
+      await g.commitAndPushWip();
+      await g.squashMergeToMain();
+
+      const tracked = execFileSync('git', ['-C', vault, 'ls-files'], { encoding: 'utf8' });
+      assert(!/\.obsidian\//.test(tracked), `.obsidian/ 미추적(로컬 ls-files) (${JSON.stringify(tracked)})`);
+      const onMain = execFileSync('git', ['-C', vault, 'ls-tree', '-r', '--name-only', 'origin/main'], { encoding: 'utf8' });
+      assert(!/\.obsidian\//.test(onMain), `.obsidian/ 미추적(origin/main) (${JSON.stringify(onMain)})`);
 
       rmSync(root, { recursive: true, force: true });
     }

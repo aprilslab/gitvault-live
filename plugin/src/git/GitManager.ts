@@ -2,13 +2,13 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { PromiseQueue } from './PromiseQueue';
+import { isStalePeer } from '../editor/peerPresence';
 
 const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
 const GIT_BLOCK_TIMEOUT_MS = 20_000;
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리 sha (origin/main 부재 시 diff 기준)
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수
 const SAVE_RETRIES = 3;
-const PEER_WIP_STALE_MS = 5 * 60 * 1000; // 마지막 커밋이 이보다 오래된 peer wip 는 presence 제외
 
 /** origin/main 한 줄의 작성자 + author-time(unix 초). 라인 blame 거터용. */
 export interface BlameLine {
@@ -58,6 +58,8 @@ export class GitManager {
 
   /** 세션 상태: null=idle(로컬 main), 문자열=편집중 wip 브랜치명. */
   private currentWip: string | null = null;
+  /** 현재 wip 이 원격에 push 되었는가 — finishToMain 이 존재하지 않는 원격 브랜치를 delete 하려다 에러 로그 내는 것 방지. */
+  private wipPushed = false;
 
   private suppressDepth = 0;
   private suppressGraceUntil = 0;
@@ -264,8 +266,8 @@ export class GitManager {
       try {
         const raw = (await this.git.raw(['log', '-1', '--format=%ct%x00%an', r])).trim();
         const [ctStr, author = ''] = raw.split('\0');
-        const ct = Number(ctStr) * 1000;
-        if (now - ct > PEER_WIP_STALE_MS) continue; // stale 제외
+        const ct = Number(ctStr); // epoch 초 (isStalePeer 가 초를 받는다)
+        if (isStalePeer(ct, now)) continue; // stale 제외
         out.push({ ref: r, device, author });
       } catch {
         /* 브랜치가 방금 삭제됨 등 — skip */
@@ -311,11 +313,12 @@ export class GitManager {
     }
     await this.git.fetch(['origin', '--prune']).catch((e) => this.log(`초기 fetch 실패: ${redact(e)}`));
     await this.suppressed(async () => {
+      // ensureOnMain 이 내부에서 seedRepoFiles() 를 호출한다 — 원격 파일 실체화(checkout-index) '이후',
+      // add/status '이전'. 그래야 (1) .gitignore 가 add 전에 있어 .obsidian/ 이 adopt 커밋에 새지 않고,
+      // (2) 원격이 가진 커스텀 .gitattributes 를 seed 가 덮지 않는다(writeIfAbsent + 실체화 선행).
+      // 모든 경로(adopt/빈 원격 seed/idle)에서 union 드라이버가 보장돼 .md 충돌 시 로컬 편집 소실을 막는다.
       await this.ensureOnMain();
       await this.deleteOwnWips(); // main 체크아웃(또는 adopt wip) 후라 안전(현재 브랜치 아님)
-      // 모든 경로(adopt/빈 원격 seed/idle)에서 union 드라이버를 보장 — 없으면 .md 충돌이
-      // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. writeIfAbsent 라 기존 파일은 존중.
-      this.seedRepoFiles();
     });
     this.warnIfNoUnion();
   }
@@ -344,39 +347,61 @@ export class GitManager {
   }
 
   /**
-   * origin/main 위로 로컬 main 이동(워킹트리 미변경). 로컬 변경분이 있으면 새 wip 로 adopt.
+   * origin/main 위로 세션 상태 결정 (워킹트리 보존).
    *
-   * status 판정은 `checkout-index -a`(원격 전용 파일 실체화) **이후** 수행한다 — 그래야 방금 clone 해
-   * 워킹트리가 비어 있는 fresh 케이스가 "삭제됨" 오탐으로 adopt 되지 않고 idle(main)로 남는다.
-   * 실제 로컬 변경(신규/수정)은 이미 index 에 stage 되어 checkout-index 후에도 status 에 그대로 잡힌다.
+   * [CRITICAL] 로컬 변경 유무를 origin/main 이 아니라 "마지막으로 동기화된 base(=oldMain)" 기준으로 판정한다.
+   * 방금 fetch 한 origin/main 으로 main 을 먼저 advance 한 뒤 status 를 보면, 앱이 닫힌 사이 팀원이 저장해
+   * origin/main 만 앞선 clean-behind 재연결이 "로컬 미저장 편집" 으로 오탐된다 → origin/main 을 base 로 삼는
+   * adopt wip 은 mergeDown 에서 origin/main 을 조상으로 보아 no-op 이 되고, 이어진 저장이 stale tree 로
+   * origin/main 을 덮어 팀원 저장분이 조용히 유실된다. 그래서 advance 전(oldMain) 기준으로 dirty 를 판정한다.
+   *
+   * 불변식: idle main 은 미푸시 로컬 커밋을 갖지 않는다(저장은 항상 squash 를 origin/main 에 push 하고 main 을
+   * 거기로 이동). 따라서 oldMain 은 언제나 origin/main 의 조상 → clean 케이스의 `merge --ff-only` 는 항상 성공.
+   *
+   * seedRepoFiles() 는 원격 파일 실체화(checkout-index) 이후·add 이전에 호출 — 원격의 커스텀 .gitattributes 를
+   * 존중하고 .gitignore 를 add 전에 배치한다.
    */
   private async ensureOnMain(): Promise<void> {
     if (!(await this.refExists('refs/remotes/origin/main'))) {
       await this.git.raw(['checkout', '-B', 'main']); // 빈 원격 부트스트랩
+      this.seedRepoFiles(); // 원격이 없으니 존중할 대상도 없음 — union 드라이버 즉시 시드
       this.currentWip = null;
+      this.wipPushed = false;
       return;
     }
-    // main 을 origin/main 으로 맞춘다. main 이 이미 체크아웃돼 있으면 `branch -f` 가 거부되므로
-    // reset 으로 이동(unborn/born 공통), 아니면 branch -f + symbolic-ref 로 전환. 워킹트리는 두 경로 모두 보존.
-    const onMain =
-      (await this.git.raw(['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim() === 'refs/heads/main';
-    if (onMain) {
-      await this.git.raw(['reset', '--mixed', 'origin/main']);
-    } else {
-      await this.git.raw(['branch', '-f', 'main', 'origin/main']);
+    // base = 마지막으로 동기화된 상태. 로컬 main 이 있으면 그것을 advance 하지 않고 HEAD 만 올려
+    // clean-behind 재연결에서 origin/main 앞섬을 로컬 편집으로 오판하지 않게 한다. 워킹트리는 두 경로 모두 보존.
+    const hasLocalMain = await this.refExists('refs/heads/main');
+    if (hasLocalMain) {
       await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
-      await this.git.raw(['reset', '--mixed']);
+      await this.git.raw(['reset', '--mixed']); // index=oldMain, 워킹트리 불변 (advance 하지 않음)
+    } else {
+      await this.git.raw(['branch', 'main', 'origin/main']); // 첫 클론/최초 실행: base=origin/main
+      await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+      await this.git.raw(['reset', '--mixed', 'origin/main']);
     }
-    await this.git.raw(['add', '--ignore-removal', '--', '.']); // 로컬 신규/수정만 stage(삭제는 무시)
-    await this.git.raw(['checkout-index', '-a']); // 원격 전용 파일 실체화(워킹트리 보존)
-    const status = (await this.git.raw(['status', '--porcelain'])).trim();
-    if (status) {
-      // 로컬 미저장 변경 → 즉시 편집 세션(adopt): 새 wip 로 커밋
+    // 원격 전용/누락 파일 실체화 — no -f 라 디스크에 이미 있는 파일은 건너뛴다(유저 편집 및 원격 커스텀 config 보존).
+    // exit 1(덮을 게 있음)도 정상 흐름이므로 삼킨다.
+    await this.git.raw(['checkout-index', '-a']).catch(() => undefined);
+    // 원격 파일 실체화 '이후' seed: 원격이 가진 .gitattributes 는 존중되고, .gitignore 는 아래 add 전에 놓인다.
+    this.seedRepoFiles();
+    // 로컬 신규/수정만 stage(삭제는 무시) → dirty 는 이제 base(oldMain) 기준.
+    // [알려진 한계] 미저장 로컬 파일 '삭제' 는 재연결 시 보존되지 않는다 — 의도적: 대량 삭제가
+    // origin/main 으로 전파돼 팀원 파일을 지우는 것을 막기 위함(수정/신규만 adopt).
+    await this.git.raw(['add', '--ignore-removal', '--', '.']);
+    const dirty = (await this.git.raw(['status', '--porcelain'])).trim().length > 0;
+    if (!dirty) {
+      // 디스크==base. base 가 origin/main 보다 뒤(팀원이 저장)일 수 있으므로 ff-only 로 그 변경을 디스크에 실체화.
+      await this.git.raw(['merge', '--ff-only', 'origin/main']).catch(() => undefined);
+      this.currentWip = null;
+      this.wipPushed = false;
+    } else {
+      // base 위 진짜 로컬 편집 → adopt: base(현 HEAD=oldMain)에서 wip fork. origin/main 으로 advance 하지 않는다.
+      // 다음 mergeDown(currentWip≠null → merge -X theirs origin/main)이 팀원의 동시 변경과 내 편집을 3-way union.
       this.currentWip = this.newWipRef();
+      this.wipPushed = false;
       await this.git.raw(['checkout', '-b', this.currentWip]);
       await this.git.commit(`adopt: ${nowIso()}`);
-    } else {
-      this.currentWip = null;
     }
   }
 
@@ -409,6 +434,7 @@ export class GitManager {
     if (!status.trim()) return false;
     if (this.currentWip === null) {
       this.currentWip = this.newWipRef();
+      this.wipPushed = false; // 새 wip — 아직 원격에 없음
       await this.git.raw(['checkout', '-b', this.currentWip]); // 현 HEAD(main) 기준 fork
     }
     await this.git.commit(`${this.deviceId}: ${nowIso()}`);
@@ -419,6 +445,7 @@ export class GitManager {
   private async pushWip(): Promise<void> {
     if (this.currentWip === null) return;
     await this.git.raw(['push', 'origin', `HEAD:refs/heads/${this.currentWip}`]);
+    this.wipPushed = true; // 원격에 존재 확정 — finishToMain 의 원격 delete 를 허용
   }
 
   /**
@@ -498,14 +525,19 @@ export class GitManager {
   /** wip 종료: main 을 target(또는 origin/main)으로 두고 HEAD=main(워킹트리 미변경), 현 wip 삭제. */
   private async finishToMain(commit: string | null): Promise<void> {
     const wip = this.currentWip;
+    const wasPushed = this.wipPushed;
     const target = commit ?? (await this.git.raw(['rev-parse', 'origin/main'])).trim();
     await this.git.raw(['branch', '-f', 'main', target]);
     await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     await this.git.raw(['reset', '--mixed']); // tree 동일 → 파일·mtime 무변경
     this.currentWip = null;
+    this.wipPushed = false;
     if (wip) {
       await this.git.raw(['branch', '-D', wip]).catch(() => undefined);
-      await this.git.raw(['push', 'origin', '--delete', wip]).catch((e) => this.log(`원격 wip 삭제 실패: ${redact(e)}`));
+      // 원격에 push 된 적 있을 때만 delete 시도 — 빠른 편집→저장(push 전 종료)에서 헛된 에러 로그 방지.
+      if (wasPushed) {
+        await this.git.raw(['push', 'origin', '--delete', wip]).catch((e) => this.log(`원격 wip 삭제 실패: ${redact(e)}`));
+      }
     }
   }
 
