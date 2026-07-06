@@ -8,11 +8,19 @@ const GIT_BLOCK_TIMEOUT_MS = 20_000;
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리 sha (origin/main 부재 시 diff 기준)
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수
 const SAVE_RETRIES = 3;
+const PEER_WIP_STALE_MS = 5 * 60 * 1000; // 마지막 커밋이 이보다 오래된 peer wip 는 presence 제외
 
 /** origin/main 한 줄의 작성자 + author-time(unix 초). 라인 blame 거터용. */
 export interface BlameLine {
   author: string;
   epoch: number;
+}
+
+/** 타 참여자의 진행 중 wip 브랜치. presence 배지 소스. */
+export interface PeerWip {
+  ref: string; // 예: 'origin/wip/dev-B/123'
+  device: string; // 브랜치명의 device 세그먼트(자기-제외 판정용)
+  author: string; // 마지막 커밋 author.name = 상대 displayName
 }
 
 export interface GitManagerOptions {
@@ -236,6 +244,42 @@ export class GitManager {
       return lines;
     } catch {
       return []; // ref/파일 없음
+    }
+  }
+
+  /**
+   * 타 참여자의 진행 중 wip 브랜치 목록(자기 제외 + staleness 필터).
+   * `origin/wip/<device>/<ts>` 만 대상 — 레거시 `origin/wip/<device>`(ts 없음)는 제외.
+   */
+  async listPeerWips(): Promise<PeerWip[]> {
+    const remote = await this.git.branch(['-r']).catch(() => ({ all: [] as string[] }));
+    const now = Date.now();
+    const out: PeerWip[] = [];
+    for (const r of remote.all) {
+      const name = r.replace(/^origin\//, '');
+      const m = /^wip\/([^/]+)\/\d+$/.exec(name); // wip/<device>/<ts>
+      if (!m) continue;
+      const device = m[1];
+      if (device === this.deviceId) continue; // 자기 제외
+      try {
+        const raw = (await this.git.raw(['log', '-1', '--format=%ct%x00%an', r])).trim();
+        const [ctStr, author = ''] = raw.split('\0');
+        const ct = Number(ctStr) * 1000;
+        if (now - ct > PEER_WIP_STALE_MS) continue; // stale 제외
+        out.push({ ref: r, device, author });
+      } catch {
+        /* 브랜치가 방금 삭제됨 등 — skip */
+      }
+    }
+    return out;
+  }
+
+  /** peer wip 브랜치의 파일 내용(`git show <ref>:<path>`). 없으면 null. */
+  async peerWipContent(ref: string, path: string): Promise<string | null> {
+    try {
+      return await this.git.raw(['show', `${ref}:${path}`]);
+    } catch {
+      return null;
     }
   }
 

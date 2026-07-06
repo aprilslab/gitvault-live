@@ -181,6 +181,47 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // --- peer wip 읽기 ---
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-peer-'));
+      const bare = initBare(root, 'peer.git');
+      pushToMain(root, bare, { 'note.md': '공용\n' });
+
+      // 참여자 B가 wip/dev-B/<ts> 를 원격에 푸시(외부 clone 으로 모사)
+      const bdir = join(root, 'devB');
+      execFileSync('git', ['clone', '-q', bare, bdir]);
+      execFileSync('git', ['-C', bdir, 'config', 'user.name', '영희']);
+      execFileSync('git', ['-C', bdir, 'config', 'user.email', 'dev-B@t']);
+      execFileSync('git', ['-C', bdir, 'checkout', '-b', 'wip/dev-B/123']);
+      writeFileSync(join(bdir, 'note.md'), '공용\n영희 작업중\n');
+      execFileSync('git', ['-C', bdir, 'add', '-A']);
+      execFileSync('git', ['-C', bdir, 'commit', '-qm', 'wip']);
+      execFileSync('git', ['-C', bdir, 'push', '-q', 'origin', 'wip/dev-B/123']);
+
+      const local = join(root, 'localA');
+      mkdirSync(local, { recursive: true });
+      const gm = newManager(local, bare, 'dev-A');
+      await gm.ensureRepo(); // fetch --prune 로 origin/wip/dev-B/123 확보
+
+      const peers = await gm.listPeerWips();
+      assert(peers.length === 1, `peer 1명 (got ${peers.length})`);
+      assert(peers[0].device === 'dev-B', `device=dev-B (got ${peers[0].device})`);
+      assert(peers[0].author === '영희', `author=영희 (got ${peers[0].author})`);
+
+      const content = await gm.peerWipContent(peers[0].ref, 'note.md');
+      assert(content !== null && content.includes('영희 작업중'), 'peer wip 파일 내용 읽음');
+
+      // 자기 wip 는 제외 — dev-A 가 편집 후 push
+      writeFileSync(join(local, 'note.md'), '공용\n내 편집\n');
+      await gm.commitAndPushWip();
+      const gm2 = newManager(local, bare, 'dev-A');
+      await gm2.ensureRepo();
+      const peers2 = await gm2.listPeerWips();
+      assert(peers2.every((p) => p.device !== 'dev-A'), '자기 wip 제외');
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });
