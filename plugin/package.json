@@ -14,7 +14,8 @@
     "test:relative": "esbuild test/relativeTime.test.ts --bundle --platform=node --format=cjs --outfile=test/_relative.cjs && node test/_relative.cjs",
     "test:blame": "esbuild test/blameLines.test.ts --bundle --platform=node --format=cjs --outfile=test/_blame.cjs && node test/_blame.cjs",
     "test:multiauthor": "esbuild test/multiAuthorBlame.test.ts --bundle --platform=node --format=cjs --outfile=test/_multiauthor.cjs && node test/_multiauthor.cjs",
-    "test": "npm run test:hunks && npm run test:linediff && npm run test:relative && npm run test:blame && npm run test:git && npm run test:multiauthor"
+    "test:peer": "esbuild test/peerPresence.test.ts --bundle --platform=node --format=cjs --outfile=test/_peer.cjs && node test/_peer.cjs",
+    "test": "npm run test:hunks && npm run test:linediff && npm run test:relative && npm run test:blame && npm run test:git && npm run test:multiauthor && npm run test:peer"
   },
   "dependencies": {
     "simple-git": "^3.27.0"
