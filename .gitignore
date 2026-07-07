@@ -24,3 +24,10 @@ _peerwip.cjs
 *.key
 id_ed25519
 id_ed25519.pub
+# 플러그인 런타임 설정(토큰 평문 저장) — 절대 커밋 금지
+data.json
+plugin/data.json
+# daemon env (토큰 포함)
+daemon/deploy/daemon.env
+# 로컬 vault 설정
+.obsidian/
