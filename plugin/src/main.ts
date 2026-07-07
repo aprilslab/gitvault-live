@@ -9,6 +9,7 @@ import {
 } from './settings';
 import { GitManager } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
+import { Heartbeat } from './sync/Heartbeat';
 import { StatusBar } from './ui/StatusBar';
 import { DiffPanel, VIEW_TYPE_OGS_DIFF } from './ui/DiffPanel';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
@@ -27,6 +28,7 @@ export default class GitSyncPlugin extends Plugin {
   settings!: OgsSettings;
   private git?: GitManager;
   private autoSync?: AutoSync;
+  private heartbeat?: Heartbeat;
   private statusBar?: StatusBar;
   private saveBadge?: HTMLElement;
   private saveNotice?: Notice;
@@ -131,6 +133,7 @@ export default class GitSyncPlugin extends Plugin {
 
   onunload(): void {
     this.autoSync?.stop();
+    this.heartbeat?.stop(); // heartbeat 파일 삭제 → daemon 즉시 인계
   }
 
   /** vault 워킹트리 절대경로 (데스크톱 전용 — 아니면 null). */
@@ -150,12 +153,17 @@ export default class GitSyncPlugin extends Plugin {
 
   private async applySettingsLocked(): Promise<void> {
     this.autoSync?.stop();
+    this.heartbeat?.stop();
 
     const base = this.getBasePath();
     if (!base) {
       this.statusBar?.set('error', '데스크톱 전용');
       return;
     }
+    // Obsidian 이 이 vault 에 떠 있는 동안 daemon 을 후퇴시킨다 — remote 설정 여부와 무관하게 시작.
+    this.heartbeat = new Heartbeat(base);
+    this.heartbeat.start();
+
     const authedRemote = buildAuthedRemote(this.settings);
     if (!authedRemote) {
       this.statusBar?.set('off');

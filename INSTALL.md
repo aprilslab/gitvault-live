@@ -157,6 +157,20 @@ tail -f /tmp/ogs-daemon.log
 
 ---
 
+## 3-4. 개인 PC 공존 — Obsidian 닫힌 동안 AI 변경을 main 에 (heartbeat lease)
+
+평소엔 Obsidian 으로 작업하고, 자리를 비운 사이 AI 에이전트가 같은 vault 파일을 바꾸는 경우.
+**같은 PC 에 플러그인(§2)과 daemon(§3)을 둘 다** 깔면 자동 교대한다:
+
+- Obsidian 실행 중 → 플러그인이 담당(편집→wip, `[저장]`→main). daemon 은 후퇴.
+- Obsidian 종료 → daemon 이 인수 → AI 파일 변경을 감지해 **main 에 직접 반영**.
+
+추가 설정 없음 — 플러그인이 `.git/ogs-plugin-alive` 를 주기 기록하고, daemon 이 그 신선도(30초)로 판정한다.
+같은 vault 를 `VAULT_PATH` 로 가리키게만 하면 된다(플러그인 vault 경로와 동일 폴더).
+
+> **주의:** Obsidian 을 닫으면 "초안(미저장) vs 발행(main)" 구분이 사라진다 — 닫기 직전 미저장 편집도
+> daemon 이 곧 main 에 올린다(디스크가 진실). 초안을 main 에 안 올리려면 닫기 전에 되돌리거나 `[저장]`.
+
 ## 4. 검증 (E2E)
 
 1. 서버(daemon 기기)에서: `echo "bridge test" >> $VAULT_PATH/bridge-test.md`

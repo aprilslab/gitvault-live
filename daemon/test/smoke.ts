@@ -3,7 +3,7 @@
  * (실 원격/Obsidian 없이 commit·push-to-main·union 병합·adopt 로직만 확인.)
  * 실행: npm run smoke -w daemon
  */
-import { Committer } from '../src/committer';
+import { Committer, HEARTBEAT_FILE } from '../src/committer';
 import type { DaemonConfig } from '../src/config';
 import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
@@ -173,6 +173,48 @@ async function main(): Promise<void> {
       `union 미보유 원격 adopt 후에도 양쪽 공존 (${JSON.stringify(mergedD)})`,
     );
     d.stop();
+
+    // ── 시나리오 E: heartbeat lease (Obsidian 플러그인과 공유 vault 교대) ──
+    const bareE = join(root, 'vaultE.git');
+    initBare(bareE);
+    seedRemote(bareE, root, { 'doc.md': 'seed\n' });
+    const vaultE = join(root, 'vaultE');
+    mkdirSync(vaultE);
+    const beat = join(vaultE, '.git', HEARTBEAT_FILE);
+    const e = new Committer({ vaultPath: vaultE, remote: bareE, deviceId: 'devE', debounceMs: 10 });
+    await e.start();
+
+    // E-1: heartbeat 신선 → daemon 후퇴 (변경 있어도 push 안 함)
+    writeFileSync(beat, `${Date.now()}\n`);
+    writeFileSync(join(vaultE, 'doc.md'), 'plugin-owns-this\n');
+    assert((await e.commitAndPush()) === 'nochange', 'heartbeat 신선 → daemon 후퇴(nochange)');
+    assert(
+      !git(bareE, ['show', 'main:doc.md']).includes('plugin-owns-this'),
+      'heartbeat 신선 → 변경분이 main 에 안 올라감',
+    );
+
+    // E-2: heartbeat 낡음 → daemon 인수 (변경분 main 반영)
+    writeFileSync(beat, `${Date.now() - 60_000}\n`); // 60s 전 = stale(>30s)
+    assert((await e.commitAndPush()) === 'pushed', 'heartbeat 낡음 → daemon 인수(pushed)');
+    assert(
+      git(bareE, ['show', 'main:doc.md']).includes('plugin-owns-this'),
+      'heartbeat 낡음 → 변경분이 main 에 반영됨',
+    );
+
+    // E-3: 플러그인이 HEAD 를 wip 에 남기고 종료 → heartbeat 부재 → daemon 이 main 으로 인수
+    sh('git', ['-C', vaultE, 'checkout', '-q', '-b', 'wip/plugin/999']); // 플러그인 세션 브랜치 모사
+    rmSync(beat, { force: true }); // 정상 종료 = heartbeat 삭제
+    writeFileSync(join(vaultE, 'doc.md'), 'ai-wrote-while-closed\n'); // Obsidian 닫힌 뒤 AI 편집
+    assert((await e.commitAndPush()) === 'pushed', 'wip HEAD + heartbeat 부재 → daemon pushed');
+    assert(
+      git(bareE, ['show', 'main:doc.md']).includes('ai-wrote-while-closed'),
+      'wip 에서 인수해도 변경분이 main(=wip 아님)에 반영됨',
+    );
+    assert(
+      (await sh('git', ['-C', vaultE, 'rev-parse', '--abbrev-ref', 'HEAD'])).trim() === 'main',
+      'takeover 후 HEAD 가 main 으로 복귀',
+    );
+    e.stop();
 
     console.log('SMOKE OK');
   } finally {

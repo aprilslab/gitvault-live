@@ -6,6 +6,11 @@ import { defaultDeviceId, type DaemonConfig } from './config';
 
 const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
 const DEVICE_ID_FILE = 'ogs-device-id'; // .git/ 하위 — 동기화되지 않고 기기 고정
+// 플러그인(Obsidian) 생존 신호 파일. 플러그인 Heartbeat 가 .git/ 에 epoch ms 를 주기 기록한다.
+// 신선하면 Obsidian 이 vault 를 소유 중 → daemon 은 commit/merge 를 후퇴한다(양쪽이 같은 .git·워킹트리
+// 를 공유하므로 동시 조작 금지). 낡음/부재 = Obsidian 종료 → daemon 이 파일 변경을 main 에 반영.
+export const HEARTBEAT_FILE = 'ogs-plugin-alive'; // 플러그인 Heartbeat 와 공유하는 파일명(계약)
+const HEARTBEAT_STALE_MS = 30_000; // 플러그인 갱신 주기(10s)의 3배 — 일시 지연에 관대
 const SYNC_INTERVAL_MS = 60_000;
 const GIT_BLOCK_TIMEOUT_MS = 20_000; // git op 이 이 시간 동안 무출력이면 중단(hung fetch 방지)
 const PUSH_RETRIES = 3;
@@ -58,13 +63,28 @@ export class Committer {
     return this.queue.add(() => this.pushMainLocked());
   }
 
-  /** 주기 sync-down: origin/main 을 로컬 main 으로 병합(직렬화). */
+  /** 주기 sync-down: origin/main 을 로컬 main 으로 병합(직렬화). 플러그인 활성 시 후퇴. */
   syncDown(): Promise<void> {
     return this.queue.add(async () => {
+      if (this.pluginActive()) return; // Obsidian 이 워킹트리 소유 중 — merge 로 건드리지 않음
       await this.flushCommit();
       await this.git.fetch(['origin', '--prune']);
       await this.mergeDown();
     });
+  }
+
+  /**
+   * 플러그인(Obsidian)이 이 vault 를 소유 중인가 — `.git/ogs-plugin-alive` 가 신선하면 true.
+   * 신선하면 daemon 은 commit/merge 를 전면 후퇴한다(플러그인이 wip/저장 흐름 담당, 공유 .git 충돌 방지).
+   */
+  private pluginActive(): boolean {
+    try {
+      const raw = readFileSync(join(this.cfg.vaultPath, '.git', HEARTBEAT_FILE), 'utf8').trim();
+      const ts = Number(raw);
+      return Number.isFinite(ts) && Date.now() - ts < HEARTBEAT_STALE_MS;
+    } catch {
+      return false; // 파일 없음/읽기 실패 = Obsidian 미실행
+    }
   }
 
   /** 현재 deviceId (테스트/로깅용). start() 이후 유효. */
@@ -90,6 +110,10 @@ export class Committer {
       await this.git.raw(['remote', 'add', 'origin', this.cfg.remote]);
     }
     await this.git.fetch(['origin', '--prune']).catch(() => undefined);
+    // 플러그인(Obsidian)이 활성이면 온보딩(체크아웃/adopt/seed = 워킹트리 조작)을 건너뛴다 —
+    // 같은 .git·워킹트리를 공유하므로 플러그인이 이미 온보딩했고, daemon 이 손대면 충돌한다.
+    // 플러그인이 종료되면 이후 pushMainLocked 의 ensureOnMainTakeover + flushCommit 이 인수한다.
+    if (this.pluginActive()) return;
     await this.ensureMainBranch();
     // 모든 경로(adopt/기존 main/빈 원격 seed)에서 union 드라이버 보장 — 없으면 .md 충돌이
     // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. wx 라 기존 파일은 존중.
@@ -170,6 +194,8 @@ export class Committer {
 
   /** 로컬 main 을 origin/main 위로 병합 후 push. 경합(non-ff) 시 fetch 부터 재시도. */
   private async pushMainLocked(): Promise<'pushed' | 'nochange'> {
+    if (this.pluginActive()) return 'nochange'; // Obsidian 활성 — 플러그인이 담당, daemon 후퇴
+    await this.ensureOnMainTakeover(); // 플러그인이 HEAD 를 wip 에 남겼을 수 있음 → main 으로 복귀
     await this.flushCommit();
     for (let attempt = 0; attempt < PUSH_RETRIES; attempt++) {
       await this.git.fetch(['origin', '--prune']).catch(() => undefined);
@@ -190,6 +216,23 @@ export class Committer {
       }
     }
     return 'nochange';
+  }
+
+  /**
+   * 커밋 전 HEAD 를 main 으로 되돌린다. 플러그인은 편집 세션에서 HEAD 를 `wip/<device>/<ts>` 에
+   * 남긴 채 종료할 수 있는데(공유 .git), daemon 인수 시 그 위에 커밋하면 안 되기 때문.
+   * 워킹트리는 보존(symbolic-ref + reset --mixed) — 디스크의 변경분(AI가 쓴 것)이 이어지는
+   * add -A 로 main 에 실린다. 이미 main 이면 no-op.
+   */
+  private async ensureOnMainTakeover(): Promise<void> {
+    const head = (await this.git.raw(['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'main')).trim();
+    if (head === 'main') return;
+    if (!(await this.refExists('refs/heads/main'))) {
+      await this.git.raw(['checkout', '-B', 'main']); // 방어적 — start()가 보통 보장
+      return;
+    }
+    await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await this.git.raw(['reset', '--mixed']); // index=main, 워킹트리 불변
   }
 
   /** origin/main 을 현재 브랜치로 병합. .md 는 union, 그 외 -X theirs. 잔여 충돌은 폴백. */

@@ -25,6 +25,21 @@
 
 > 대비: 헤드리스 `daemon/` 은 에디터가 없어 로컬 main 을 직접 쓰고 main 에 연속 push 한다(옛 모델 유지).
 
+## daemon ↔ 플러그인 공존 (heartbeat lease)
+
+같은 PC 에 daemon 과 Obsidian 플러그인을 **함께** 깔면(개인 PC: 평소 Obsidian, 자리 비울 땐 AI 에이전트가 파일 변경), 둘이 같은 `.git`·워킹트리를 공유하므로 동시 조작은 금물이다. `.git/ogs-plugin-alive` 파일로 **소유권을 임대**한다.
+
+| Obsidian 상태 | heartbeat | 담당 | main 반영 |
+|---|---|---|---|
+| 실행 중 | 플러그인이 10s 주기 갱신(신선) | **플러그인** | 편집→wip, `[저장]`→main (기존 협업 모델) |
+| 종료(정상) | onunload 가 파일 삭제(부재) | **daemon** | 파일 변경→main 직접 push |
+| 크래시 | 갱신 멈춤 → 30s 후 stale | **daemon** | 30s 뒤 인수 |
+
+- **daemon 후퇴**: `pushMainLocked`/`syncDown`/start 온보딩 진입 시 `pluginActive()`(heartbeat < 30s) 면 즉시 반환 — commit·merge·checkout 일체 안 함.
+- **인수 시 브랜치 복귀**: 플러그인은 편집 세션에서 HEAD 를 `wip/<device>/<ts>` 에 남기고 종료할 수 있다. daemon 은 커밋 전 `ensureOnMainTakeover`(HEAD≠main 이면 `symbolic-ref`+`reset --mixed`, 워킹트리 보존)로 main 에 복귀한 뒤 `add -A` → 디스크 상태(=AI 변경분)를 main 에 싣는다.
+- **의미상 주의**: Obsidian 이 닫히면 "초안(wip) vs 발행(main)" 구분이 사라지고 **디스크가 진실**이 된다 — 닫기 직전 미저장 초안도 daemon 이 main 에 발행한다.
+- 회귀: `daemon/test/smoke.ts` 시나리오 E(후퇴/인수/wip-takeover).
+
 ## 핵심 시퀀스 (플러그인)
 
 ### 로드 — `ensureRepo` → `ensureOnMain`
