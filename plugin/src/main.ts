@@ -272,18 +272,23 @@ export default class GitSyncPlugin extends Plugin {
       const buffer = cm.state.doc.toString();
       // (a) 내 편집 하이라이트: origin/main 대비 내가 추가/변경한 줄(newCount>0 훅만)
       const mineHunks = base === null ? [] : diffLines(base, buffer).filter((h) => h.newCount > 0);
-      // (b) 작성 중 배지: 타 참여자 wip 내용 vs 내 버퍼 (git 호출은 sync 때만; 여기선 캐시)
+      // (b) 작성 중 배지: 타 참여자 wip 내용 vs 공유 base(origin/main) — 내 버퍼가 아니다.
+      // [CRITICAL] 버퍼 기준으로 diff 하면 내가 편집 중인 origin/main 줄이 peer 의 원본과 달라져
+      // "peer 가 작성 중"으로 오탐된다(실은 내 편집). base 기준이면 peer 배지는 내 편집과 무관해진다.
+      // base 가 없으면(신규 노트 등 origin/main 에 없음) 비교할 공유 기준이 없으므로 presence 를 건너뛴다.
       const peers: { author: string; content: string }[] = [];
-      for (const p of this.peerWips) {
-        const cacheKey = `${p.ref}\0${path}`;
-        let content = this.peerContentCache.get(cacheKey);
-        if (content === undefined) {
-          content = await git.peerWipContent(p.ref, path);
-          this.peerContentCache.set(cacheKey, content);
+      if (base !== null) {
+        for (const p of this.peerWips) {
+          const cacheKey = `${p.ref}\0${path}`;
+          let content = this.peerContentCache.get(cacheKey);
+          if (content === undefined) {
+            content = await git.peerWipContent(p.ref, path);
+            this.peerContentCache.set(cacheKey, content);
+          }
+          if (content !== null) peers.push({ author: p.author, content });
         }
-        if (content !== null) peers.push({ author: p.author, content });
       }
-      const peerHunks = mergePeerHunks(peers, buffer);
+      const peerHunks = base === null ? [] : mergePeerHunks(peers, base);
       const hunks = [...mineHunks, ...peerHunks];
       const key = JSON.stringify(hunks); // hunks 가 author 를 포함 → 별도 키 불필요
       if (this.lastHunksKey.get(cm) === key) return; // 불변 — dispatch/재빌드 생략

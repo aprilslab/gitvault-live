@@ -52,8 +52,8 @@ async function main(): Promise<void> {
     let peers = await gmA.listPeerWips();
     assert(peers.length === 1 && peers[0].author === '영희', 'dev-A 가 영희 wip 인식');
     const content = await gmA.peerWipContent(peers[0].ref, 'note.md');
-    const myBuffer = '공용 문서\n'; // dev-A 는 아직 원본
-    const hunks = mergePeerHunks([{ author: peers[0].author, content: content ?? '' }], myBuffer);
+    const myBase = '공용 문서\n'; // origin/main 내용(=dev-A 가 아직 원본) — mergePeerHunks 2번째 인자는 base
+    const hunks = mergePeerHunks([{ author: peers[0].author, content: content ?? '' }], myBase);
     assert(hunks.some((h) => h.author === '영희' && h.removedLines.some((l) => l.includes('영희가 쓰는 중'))), '영희 작성중 훅 표시');
 
     // dev-B 저장 → wip 삭제 → dev-A presence 소멸 + main 반영

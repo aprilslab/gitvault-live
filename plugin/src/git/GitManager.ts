@@ -317,8 +317,10 @@ export class GitManager {
       // add/status '이전'. 그래야 (1) .gitignore 가 add 전에 있어 .obsidian/ 이 adopt 커밋에 새지 않고,
       // (2) 원격이 가진 커스텀 .gitattributes 를 seed 가 덮지 않는다(writeIfAbsent + 실체화 선행).
       // 모든 경로(adopt/빈 원격 seed/idle)에서 union 드라이버가 보장돼 .md 충돌 시 로컬 편집 소실을 막는다.
+      // [CRITICAL] deleteOwnWips() 는 ensureOnMain() *내부에서*, adopt 가 세션 wip 을 fork 하기 '전'에
+      // 호출된다(HEAD 가 main 에 올라간 직후) — 그래야 레거시 영속 브랜치 `wip/<device>` 가 남아있는 상태로
+      // `checkout -b wip/<device>/<ts>` 를 시도해 D/F(ref 디렉토리/파일) 충돌로 실패하는 일이 없다.
       await this.ensureOnMain();
-      await this.deleteOwnWips(); // main 체크아웃(또는 adopt wip) 후라 안전(현재 브랜치 아님)
     });
     this.warnIfNoUnion();
   }
@@ -364,6 +366,7 @@ export class GitManager {
   private async ensureOnMain(): Promise<void> {
     if (!(await this.refExists('refs/remotes/origin/main'))) {
       await this.git.raw(['checkout', '-B', 'main']); // 빈 원격 부트스트랩
+      await this.deleteOwnWips(); // fork 전 레거시 wip 제거(D/F 충돌 방지) — main 체크아웃 직후라 안전
       this.seedRepoFiles(); // 원격이 없으니 존중할 대상도 없음 — union 드라이버 즉시 시드
       this.currentWip = null;
       this.wipPushed = false;
@@ -380,6 +383,13 @@ export class GitManager {
       await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
       await this.git.raw(['reset', '--mixed', 'origin/main']);
     }
+    // [CRITICAL] HEAD 가 main 위(어느 wip 도 아님)인 지금 레거시 wip/<device> 를 지운다 — 아래
+    // dirty 판정에서 adopt 로 갈 경우 `checkout -b wip/<device>/<ts>` 가 fork 되는데, 레거시 영속
+    // 브랜치 `wip/<device>` 가 그때까지 남아 있으면 git 이 'refs/heads/wip/<device>' 와
+    // 'refs/heads/wip/<device>/<ts>' 를 동시에 가질 수 없어(D/F 충돌) fork 가 fatal 로 실패한다.
+    // branch -D/push --delete 는 인덱스·워킹트리를 건드리지 않으므로 아래 dirty 판정(oldMain 기준)에
+    // 영향 없다.
+    await this.deleteOwnWips();
     // 원격 전용/누락 파일 실체화 — no -f 라 디스크에 이미 있는 파일은 건너뛴다(유저 편집 및 원격 커스텀 config 보존).
     // exit 1(덮을 게 있음)도 정상 흐름이므로 삼킨다.
     await this.git.raw(['checkout-index', '-a']).catch(() => undefined);

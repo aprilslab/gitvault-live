@@ -342,6 +342,59 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // --- [CRITICAL] D/F ref 충돌 회귀: 레거시 wip/<device>(구버전 영속 브랜치) + dirty 워킹트리 동시 존재 ---
+    // 구버전(영속 wip) 빌드가 남긴 wip/dev-A 가 아직 정리 안 된 상태로, 오프라인 편집 중(dirty) 앱을
+    // 새 빌드로 재시작하면 ensureOnMain 의 adopt 포크(`checkout -b wip/dev-A/<ts>`)가
+    // 'refs/heads/wip/dev-A' 존재로 인한 D/F(디렉토리/파일) 충돌로 fatal 나던 회귀.
+    // deleteOwnWips() 를 adopt 포크 '전'(HEAD 가 main 에 오른 직후)으로 옮겨 고정 — 기존 레거시+CLEAN
+    // 마이그레이션 테스트(위 ephemeral wip 생명주기 블록)는 dirty 조합을 다루지 않아 이 회귀를 못 잡았었다.
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-df-'));
+      const bare = initBare(root, 'df.git');
+      pushToMain(root, bare, { 'note.md': 'base\n' }); // origin/main 부트스트랩
+      const vault = join(root, 'vault');
+      mkdirSync(vault, { recursive: true });
+
+      // dev-A: 최초 로드 → 편집 → 저장 (origin/main 확립 + 로컬 main 존재)
+      const gA = newManager(vault, bare, 'dev-A');
+      await gA.ensureRepo();
+      writeFileSync(join(vault, 'note.md'), 'v1\n');
+      await gA.commitAndPushWip();
+      const saved = await gA.squashMergeToMain();
+      assert(saved === 'saved', `dev-A v1 저장 (got ${saved})`);
+
+      // 구버전 빌드가 남긴 레거시 영속 wip/dev-A 모사(ts 없음) — 로컬 + 원격
+      execFileSync('git', ['-C', vault, 'branch', 'wip/dev-A', 'main']);
+      execFileSync('git', ['-C', vault, 'push', '-q', 'origin', 'wip/dev-A']);
+
+      // 마이그레이션 완료 전 dirty 워킹트리(오프라인 편집) — 이 조합이 D/F 충돌을 유발했다.
+      writeFileSync(join(vault, 'note.md'), 'v1-dirty\n');
+
+      // 프레시 GitManager(새 인스턴스, 같은 vault 디렉토리) — 로드 시 ensureOnMain 이 adopt 포크를 시도.
+      const gA2 = newManager(vault, bare, 'dev-A');
+      let threw: unknown = null;
+      try {
+        await gA2.ensureRepo();
+      } catch (e) {
+        threw = e;
+      }
+      assert(threw === null, `(a) 레거시+dirty 동시 존재해도 ensureRepo 안 던짐 (got ${threw instanceof Error ? threw.message : threw})`);
+
+      const legacyLocal = execFileSync('git', ['-C', vault, 'branch', '--list', 'wip/dev-A'], { encoding: 'utf8' }).trim();
+      assert(legacyLocal === '', `(b) 레거시 로컬 wip/dev-A 삭제됨 (got '${legacyLocal}')`);
+      const legacyRemote = execFileSync('git', ['-C', vault, 'ls-remote', '--heads', 'origin', 'wip/dev-A'], { encoding: 'utf8' }).trim();
+      assert(legacyRemote === '', `(b) 레거시 원격 wip/dev-A 삭제됨 (got '${legacyRemote}')`);
+
+      const head = execFileSync('git', ['-C', vault, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+      assert(/^wip\/dev-A\/\d+$/.test(head) || head === 'main', `(c) HEAD=adopt wip 또는 main, D/F 아님 (got ${head})`);
+      assert(
+        readFileSync(join(vault, 'note.md'), 'utf8') === 'v1-dirty\n',
+        '(d) dirty 편집 내용 보존(워킹트리 불변, D/F 에러로 중단되지 않았음)',
+      );
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });
