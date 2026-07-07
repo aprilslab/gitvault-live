@@ -42,7 +42,9 @@ Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 
 
 ## 설치
 
-1. 관리자: 대상 repo 생성 + `templates/` 의 `.gitattributes`/`.gitignore` 를 루트에 커밋(또는 플러그인이 빈 repo seed). 에이전트 쪽은 `daemon/` 을 `VAULT_PATH`/`REMOTE`(HTTPS+토큰) env 로 구동.
+OS 별(macOS/Windows 플러그인, Linux/macOS/Windows daemon) 전체 절차는 [`INSTALL.md`](./INSTALL.md).
+
+1. 관리자: 대상 repo 생성 + `templates/` 의 `.gitattributes`/`.gitignore` 를 루트에 커밋(또는 플러그인이 빈 repo seed). 에이전트 쪽은 `daemon/` 을 `VAULT_PATH`/`REMOTE`(HTTPS+토큰) env 로 구동 — 상주 배포는 [`daemon/DEPLOY.md`](./daemon/DEPLOY.md).
 2. 사용자: 플러그인 설치 → 설정에서 repo URL + 토큰 입력 → [연결 테스트]. 이후 전 과정 자동.
 
 비개발자용 상세 절차는 [`docs/ONBOARDING.md`](./docs/ONBOARDING.md).
