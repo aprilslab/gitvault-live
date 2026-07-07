@@ -10,7 +10,7 @@
 
 - **Obsidian 을 여는 기기** → `plugin/` 설치 (§2)
 - **에디터 없이 파일만 바뀌는 기기**(서버, 에이전트 구동 머신) → `daemon/` 설치 (§3)
-- 같은 기기에 둘 다 띄우지 않는다 (중복 커밋).
+- **개인 PC 에서 둘 다** — 평소 Obsidian + 자리 비울 때 AI 가 파일 변경 → **둘 다 설치 가능**(§3-4). heartbeat lease 로 자동 교대하니 중복 커밋 없음.
 
 ---
 
@@ -181,6 +181,6 @@ tail -f /tmp/ogs-daemon.log
 
 - **토큰 평문** — 플러그인 `data.json`·`.git/config`, daemon env 파일 모두 평문. 파일 권한(600) 관리 + 기기별 토큰.
 - **DEVICE_ID 유일성** — 모든 기기(플러그인·daemon)의 식별자가 서로 달라야 함. 플러그인은 자동 보장, daemon 은 env 로 지정 시 주의.
-- **한 vault = 한 클라이언트** — 같은 디렉터리에 plugin 과 daemon 을 동시에 붙이지 말 것.
+- **같은 vault 에 plugin+daemon 은 heartbeat lease 로만** — 같은 PC 공존은 §3-4 방식(자동 교대)이라 안전. 단 **다른 두 기기의 daemon 을 같은 vault 폴더에** 붙이는 식은 금물(lease 는 로컬 `.git` 파일 기반이라 기기 간 조율 못 함).
 - **다른 동기화 도구와 병행 금지** — LiveSync·Obsidian Sync·iCloud/OneDrive 실시간 동기화 폴더 위에 얹으면 충돌. vault 는 이 시스템 전용 디렉터리로.
 - `.obsidian/` 은 동기화되지 않음(의도) — 기기별 플러그인·테마 설정은 각자 관리.
