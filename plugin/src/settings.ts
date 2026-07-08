@@ -117,8 +117,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('액세스 토큰')
-      .setDesc('대상 repo 쓰기 권한 토큰. 이 기기에만 저장됩니다(공용 PC 주의).')
+      .setName('액세스 토큰 (선택)')
+      .setDesc('대상 repo 쓰기 권한 토큰. 이 기기에만 저장됩니다(공용 PC 주의). 비우면 이 기기에 이미 설정된 git 자격증명(credential helper·SSH 키·기존 origin)을 사용합니다.')
       .addText((t) => {
         t.setPlaceholder('ghp_… / glpat-…')
           .setValue(s.token)
@@ -209,11 +209,11 @@ export class GitSyncSettingTab extends PluginSettingTab {
   private async testConnection(): Promise<boolean> {
     const s = this.plugin.settings;
     const url = buildAuthedRemote(s);
-    if (!url) return false;
     const base = this.plugin.getBasePath();
     try {
       const git = simpleGit(base ?? undefined, { timeout: { block: 15_000 } });
-      await git.listRemote([url, 'HEAD']);
+      // URL 있으면 그걸로, 없으면(토큰·URL 미입력) vault 의 기존 origin 으로 테스트.
+      await git.listRemote([url || 'origin', 'HEAD']);
       return true;
     } catch {
       return false;

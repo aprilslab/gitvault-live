@@ -26,8 +26,10 @@ export interface PeerWip {
 export interface GitManagerOptions {
   /** vault 워킹트리 절대경로 (FileSystemAdapter.getBasePath()). */
   basePath: string;
-  /** 인증이 포함된 remote URL (https://<user>:<token>@host/path.git). 로그에 노출 금지. */
+  /** 인증이 포함된 remote URL (https://<user>:<token>@host/path.git). 로그에 노출 금지. 토큰 없으면 인증 없는 평문 URL(또는 빈 문자열=기존 origin 사용). */
   authedRemote: string;
+  /** true(토큰 입력됨)면 기존 origin 을 authedRemote 로 덮어쓴다. false면 기존 origin 보존 — 이 기기의 git 자격증명(credential helper·SSH·이미 박힌 토큰)을 재사용. */
+  bakeCredentials?: boolean;
   /** 커밋 identity 및 wip 브랜치 이름에 쓰이는 안정적 기기 식별자. */
   deviceId: string;
   /** 협업 표시이름(커밋 author.name). 비우면 deviceId. */
@@ -306,10 +308,16 @@ export class GitManager {
     await this.git.addConfig('core.quotePath', 'false');
 
     const remotes = await this.git.getRemotes(true).catch(() => []);
-    if (!remotes.find((r) => r.name === 'origin')) {
-      await this.git.raw(['remote', 'add', 'origin', this.opts.authedRemote]);
-    } else {
-      await this.git.raw(['remote', 'set-url', 'origin', this.opts.authedRemote]);
+    const hasOrigin = !!remotes.find((r) => r.name === 'origin');
+    if (this.opts.authedRemote) {
+      if (!hasOrigin) {
+        await this.git.raw(['remote', 'add', 'origin', this.opts.authedRemote]);
+      } else if (this.opts.bakeCredentials) {
+        await this.git.raw(['remote', 'set-url', 'origin', this.opts.authedRemote]); // 토큰 입력됨 → 자격증명 갱신
+      }
+      // else: origin 존재 + 토큰 없음 → 기존 origin 보존(SSH/credential helper/이미 박힌 토큰 재사용)
+    } else if (!hasOrigin) {
+      throw new Error('저장소 URL 또는 vault 의 기존 git origin 이 필요합니다');
     }
     await this.git.fetch(['origin', '--prune']).catch((e) => this.log(`초기 fetch 실패: ${redact(e)}`));
     await this.suppressed(async () => {

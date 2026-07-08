@@ -1,4 +1,6 @@
 import { Plugin, MarkdownView, FileSystemAdapter, TFile, Notice, Platform, debounce } from 'obsidian';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import type { EditorView } from '@codemirror/view';
 import {
   OgsSettings,
@@ -165,7 +167,9 @@ export default class GitSyncPlugin extends Plugin {
     this.heartbeat.start();
 
     const authedRemote = buildAuthedRemote(this.settings);
-    if (!authedRemote) {
+    // 토큰(및 URL) 없이도 vault 에 이미 origin 이 있으면 그걸로 동작 — 기기의 git 자격증명 재사용.
+    const vaultIsRepo = existsSync(join(base, '.git'));
+    if (!authedRemote && !vaultIsRepo) {
       this.statusBar?.set('off');
       return;
     }
@@ -180,6 +184,7 @@ export default class GitSyncPlugin extends Plugin {
     this.git = new GitManager({
       basePath: base,
       authedRemote,
+      bakeCredentials: !!this.settings.token.trim(), // 토큰 입력 시에만 origin URL 덮어씀
       deviceId: this.settings.deviceId,
       displayName: this.settings.displayName,
       flushEditors,
