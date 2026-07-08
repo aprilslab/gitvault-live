@@ -216,6 +216,36 @@ async function main(): Promise<void> {
     );
     e.stop();
 
+    // ── 시나리오 F: REMOTE 빔 + vault 에 기존 origin → 기존 origin 재사용 ──
+    // (배포 후 config.env 에서 REMOTE 지우고 재시작해도 vault 자격증명 재사용해 계속 동작해야 한다.)
+    const bareF = join(root, 'vaultF.git');
+    initBare(bareF);
+    seedRemote(bareF, root, { 'doc.md': 'seed-F\n' });
+    const vaultF = join(root, 'vaultF');
+    mkdirSync(vaultF);
+    // vault 에 미리 git init + origin 설정 (사용자가 수동 clone/설정한 상황 모사)
+    sh('git', ['init', '-b', 'main', vaultF]);
+    sh('git', ['-C', vaultF, 'remote', 'add', 'origin', bareF]);
+    const f = new Committer({ vaultPath: vaultF, remote: '', deviceId: 'devF', debounceMs: 10 });
+    await f.start(); // REMOTE 빔이어도 기존 origin 사용해 부트스트랩·push 성공해야 함
+    writeFileSync(join(vaultF, 'note.md'), 'from F\n');
+    assert((await f.commitAndPush()) === 'pushed', 'REMOTE 빔 + 기존 origin → push 성공');
+    assert(git(bareF, ['show', 'main:note.md']).includes('from F'), 'REMOTE 빔에서도 main 에 반영됨');
+    f.stop();
+
+    // ── 시나리오 G: REMOTE 빔 + origin 도 없음 → 명확 에러 ──
+    const vaultG = join(root, 'vaultG');
+    mkdirSync(vaultG);
+    const g = new Committer({ vaultPath: vaultG, remote: '', deviceId: 'devG', debounceMs: 10 });
+    let threw: unknown = null;
+    try {
+      await g.start();
+    } catch (e) {
+      threw = e;
+    }
+    g.stop();
+    assert(threw instanceof Error && threw.message.includes('REMOTE'), `REMOTE 빔 + origin 없음 → 명확 에러 (got ${threw instanceof Error ? threw.message : threw})`);
+
     console.log('SMOKE OK');
   } finally {
     rmSync(root, { recursive: true, force: true });

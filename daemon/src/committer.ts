@@ -106,9 +106,13 @@ export class Committer {
     await this.git.addConfig('core.quotePath', 'false');
 
     const remotes = await this.git.getRemotes(true).catch(() => []);
-    if (!remotes.find((r) => r.name === 'origin')) {
+    const hasOrigin = !!remotes.find((r) => r.name === 'origin');
+    if (!hasOrigin) {
+      // REMOTE 없고 기존 origin 도 없음 → 부트스트랩 불가. plugin 은 status='off' 로 대기하지만 daemon 은 헤드리스라 명확 에러로 종료.
+      if (!this.cfg.remote) throw new Error('REMOTE 환경변수 또는 vault 에 기존 origin 이 필요합니다');
       await this.git.raw(['remote', 'add', 'origin', this.cfg.remote]);
     }
+    // else: origin 존재 → 재사용(기기 자격증명·SSH·이미 박힌 토큰). REMOTE 로 덮어쓰지 않는다(설정 파기 방지).
     await this.git.fetch(['origin', '--prune']).catch(() => undefined);
     // 플러그인(Obsidian)이 활성이면 온보딩(체크아웃/adopt/seed = 워킹트리 조작)을 건너뛴다 —
     // 같은 .git·워킹트리를 공유하므로 플러그인이 이미 온보딩했고, daemon 이 손대면 충돌한다.
