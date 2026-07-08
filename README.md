@@ -73,6 +73,12 @@ curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/in
 
 설치 후 플러그인은 Obsidian 설정에서 repo URL+토큰 입력 → [연결 테스트]. daemon 은 바로 상주 시작.
 
+daemon 서비스는 **vault 이름별 인스턴스**로 등록된다(기본 = vault 폴더명). 한 머신에서 vault 여러 개를 각각 돌리려면 그대로 여러 번 실행하거나 `--name`/`-Name` 으로 이름을 지정:
+```bash
+curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → obsidian-git-sync@wiki
+curl -fsSL .../install.sh | bash -s -- daemon --vault ~/notes --name notes  # → obsidian-git-sync@notes
+```
+
 ### 수동 설치
 
 clone 후 직접:

@@ -11,13 +11,15 @@
 #   --vault  <path>   플러그인=Obsidian vault 폴더 / daemon=감시할 vault 폴더 (필수)
 #   --remote <url>    daemon: 대상 repo URL (origin 미설정 시). 토큰은 아래 --token 또는 git credential
 #   --token  <tok>    daemon: 액세스 토큰(선택). 주면 remote URL 에 삽입. 생략 시 기존 git 자격증명 사용
-#   --device <id>     daemon: 기기 식별자 (기본 hostname 기반)
+#   --name   <name>   daemon: 인스턴스 이름 (기본 vault 폴더명). 한 머신에 vault 여러 개면 이걸로 분리
+#                     → 서비스 obsidian-git-sync@<name>, env /etc/obsidian-git-sync/<name>.env
+#   --device <id>     daemon: 기기 식별자 (기본 <hostname>-<name>)
 #   --repo   <url>    소스 repo (기본 공개 repo). 로컬 clone 에서 실행 시 무시
 set -euo pipefail
 
 REPO_URL_DEFAULT="https://github.com/aprilslab/obsidian-git-sync.git"
 MODE="${1:-}"; shift || true
-VAULT=""; REMOTE=""; TOKEN=""; DEVICE=""; SRC_REPO="$REPO_URL_DEFAULT"
+VAULT=""; REMOTE=""; TOKEN=""; DEVICE=""; NAME=""; SRC_REPO="$REPO_URL_DEFAULT"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,10 +27,13 @@ while [ $# -gt 0 ]; do
     --remote) REMOTE="${2:-}"; shift 2 ;;
     --token)  TOKEN="${2:-}"; shift 2 ;;
     --device) DEVICE="${2:-}"; shift 2 ;;
+    --name)   NAME="${2:-}"; shift 2 ;;
     --repo)   SRC_REPO="${2:-}"; shift 2 ;;
     *) echo "알 수 없는 플래그: $1" >&2; exit 1 ;;
   esac
 done
+
+slug(){ printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$//'; }
 
 die(){ echo "✗ $*" >&2; exit 1; }
 info(){ echo "→ $*"; }
@@ -69,7 +74,11 @@ fi
 
 # ── daemon 설치 ────────────────────────────────────────────────────────
 [ -f daemon/dist/index.js ] || die "daemon 빌드 산출물 없음"
-DEVICE="${DEVICE:-$(hostname | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-')}"
+# 인스턴스 이름 = --name, 기본은 vault 폴더명 slug. 한 머신에 vault 여러 개면 이걸로 분리된다.
+NAME="${NAME:-$(slug "$(basename "$VAULT")")}"
+[ -n "$NAME" ] || die "--name 유추 실패 — --name <이름> 명시"
+# DEVICE_ID 기본 = <hostname>-<name> → 같은 머신 vault 마다 고유 identity (커밋 주체 충돌 방지)
+DEVICE="${DEVICE:-$(slug "$(hostname)")-$NAME}"
 # origin 미설정이면 --remote 필수. 토큰 주면 URL 에 삽입.
 REMOTE_EFF="$REMOTE"
 if [ -n "$TOKEN" ] && [ -n "$REMOTE" ]; then
@@ -83,10 +92,11 @@ if [ -z "$REMOTE_EFF" ]; then
     die "daemon: --remote <url> 필수 (vault 에 origin 도 없음)"
   fi
 fi
+info "인스턴스: $NAME (device=$DEVICE, vault=$VAULT)"
 
 sudo mkdir -p /opt/obsidian-git-sync /etc/obsidian-git-sync
 sudo cp daemon/dist/index.js /opt/obsidian-git-sync/daemon.js
-ENVF="/etc/obsidian-git-sync/daemon.env"
+ENVF="/etc/obsidian-git-sync/$NAME.env"    # vault별 env
 sudo tee "$ENVF" >/dev/null <<ENV
 VAULT_PATH=$VAULT
 REMOTE=$REMOTE_EFF
@@ -97,15 +107,16 @@ sudo chmod 600 "$ENVF"
 
 if [ "$OS" = "Linux" ]; then
   have systemctl || die "systemd 없음 — 수동 실행: VAULT_PATH=$VAULT REMOTE=... node /opt/obsidian-git-sync/daemon.js"
-  sudo tee /etc/systemd/system/obsidian-git-sync.service >/dev/null <<UNIT
+  # 템플릿 유닛(%i=인스턴스명) — 한 번 설치하면 vault 마다 obsidian-git-sync@<name> 로 여러 개 기동 가능
+  sudo tee /etc/systemd/system/obsidian-git-sync@.service >/dev/null <<UNIT
 [Unit]
-Description=obsidian-git-sync daemon ($VAULT)
+Description=obsidian-git-sync daemon (%i vault)
 After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
 Environment=HOME=$HOME
-EnvironmentFile=$ENVF
+EnvironmentFile=/etc/obsidian-git-sync/%i.env
 ExecStart=$(command -v node) /opt/obsidian-git-sync/daemon.js
 Restart=always
 RestartSec=5
@@ -115,17 +126,18 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 UNIT
   sudo systemctl daemon-reload
-  sudo systemctl enable --now obsidian-git-sync
-  echo "✓ daemon 상주 시작 (systemd)"
-  echo "  로그: journalctl -u obsidian-git-sync -f   중지: sudo systemctl disable --now obsidian-git-sync"
+  sudo systemctl enable --now "obsidian-git-sync@$NAME"
+  echo "✓ daemon 상주 시작 (systemd): obsidian-git-sync@$NAME"
+  echo "  로그: journalctl -u obsidian-git-sync@$NAME -f   중지: sudo systemctl disable --now obsidian-git-sync@$NAME"
 elif [ "$OS" = "Darwin" ]; then
-  PLIST="$HOME/Library/LaunchAgents/com.obsidian-git-sync.daemon.plist"
+  LABEL="com.obsidian-git-sync.$NAME"          # vault별 label
+  PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
   cat > "$PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.obsidian-git-sync.daemon</string>
+  <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array>
     <string>$(command -v node)</string><string>/opt/obsidian-git-sync/daemon.js</string>
   </array>
@@ -135,14 +147,14 @@ elif [ "$OS" = "Darwin" ]; then
     <key>DEVICE_ID</key><string>$DEVICE</string>
   </dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/ogs-daemon.log</string>
-  <key>StandardErrorPath</key><string>/tmp/ogs-daemon.log</string>
+  <key>StandardOutPath</key><string>/tmp/ogs-daemon-$NAME.log</string>
+  <key>StandardErrorPath</key><string>/tmp/ogs-daemon-$NAME.log</string>
 </dict></plist>
 PL
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load "$PLIST"
-  echo "✓ daemon 상주 시작 (launchd)"
-  echo "  로그: tail -f /tmp/ogs-daemon.log   중지: launchctl unload $PLIST"
+  echo "✓ daemon 상주 시작 (launchd): $LABEL"
+  echo "  로그: tail -f /tmp/ogs-daemon-$NAME.log   중지: launchctl unload $PLIST"
 else
   die "미지원 OS: $OS (Windows 는 install.ps1)"
 fi
