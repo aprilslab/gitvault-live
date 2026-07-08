@@ -10,6 +10,13 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수
 const SAVE_RETRIES = 3;
 
+/**
+ * 이력 패널에서 숨길 자동 커밋 subject.
+ * `<token>: <ISO-8601>` 단일 형태만 매칭 — flushCommit(`<deviceId>: <iso>`), `adopt: <iso>`, `sync-down: <iso>`.
+ * 사용자 저장(`저장: <displayName> <iso>` — `:` 뒤에 공백 포함 2토큰)이나 손수 커밋은 매칭 안 됨.
+ */
+const AUTO_COMMIT_SUBJECT = /^\S+: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
 /** origin/main 한 줄의 작성자 + author-time(unix 초). 라인 blame 거터용. */
 export interface BlameLine {
   author: string;
@@ -49,15 +56,20 @@ export interface GitManagerOptions {
 }
 
 /**
- * 플러그인용 vault git 클라이언트 (ephemeral wip 생명주기 모델).
- * - commitAndPushWip: 편집 → 세션 wip(`wip/<device>/<ts>`) lazy-fork 커밋·푸시
+ * 플러그인용 vault git 클라이언트 (eager 세션 wip 생명주기 모델).
+ * - commitAndPushWip: 편집 → 세션 wip(`wip/<device>/<ts>`) 커밋·푸시
  * - syncDown: origin/main → (편집중이면 wip union / idle 이면 ff) 병합 (타 참여자 변경 수신)
- * - squashMergeToMain: merged tree 를 origin/main 위 1커밋으로 squash push 후 main 으로 복귀·wip 삭제
+ * - squashMergeToMain: merged tree 를 origin/main 위 1커밋으로 squash push 후 새 세션 wip 으로 재시작
  *
- * 세션 상태(`currentWip`): null=idle(로컬 `main` 체크아웃), 문자열=편집중(그 wip 체크아웃).
- * 로드 시 origin/main 위로 main 을 맞추고(워킹트리 보존) 자기 소유 wip(레거시·잔여 세션)를 정리한다.
- * 모든 git op 는 PromiseQueue 로 직렬화. 워킹트리를 쓰는 op(merge/adopt/main 전환)는 suppress 로
- * 감싸 이벤트 피드백 루프를 차단한다.
+ * 세션 상태(`currentWip`): 세션 유지 중엔 항상 문자열(HEAD=wip). `ensureRepo` 와 `finishToMain` 이
+ * 즉시 wip 을 fork 해 HEAD 를 wip 에 고정한다. 이유: 같은 기기에서 Obsidian 이 켜진 채로 외부 도구
+ * (Claude/git CLI/cron) 가 `git commit` 을 실행하는 순간 HEAD 가 main 이면 그 커밋이 main 을 직접
+ * 오염시킨다. 세션 유지 중 HEAD=wip 이면 어떤 도구의 커밋도 wip 에 착지하고, 저장 흐름
+ * (wip → squash → main) 을 통해 정상 반영된다.
+ *
+ * 로드 시 origin/main 위로 main 을 맞추고(워킹트리 보존) 자기 소유 wip(레거시·잔여 세션)를 정리한 뒤
+ * 새 세션 wip 을 fork 한다. 모든 git op 는 PromiseQueue 로 직렬화. 워킹트리를 쓰는 op(merge/adopt/main
+ * 전환)는 suppress 로 감싸 이벤트 피드백 루프를 차단한다.
  */
 export class GitManager {
   private readonly git: SimpleGit;
@@ -97,11 +109,14 @@ export class GitManager {
     return this.queue.add(() => this.ensureRepoLocked());
   }
 
-  /** 세션 wip(`wip/<device>/<ts>`, 최초 변경 시 fork)로 커밋·푸시 (직렬화). */
+  /** 세션 wip(`wip/<device>/<ts>`, ensureRepo·finishToMain 에서 eager fork)로 커밋·푸시 (직렬화). */
   commitAndPushWip(): Promise<'pushed' | 'nochange'> {
     return this.queue.add(async () => {
       const committed = await this.flushCommit();
-      await this.pushWip();
+      // [CRITICAL] pushWip 는 새 커밋이 있을 때만 — eager fork 후 편집 없으면 wip 은 origin/main sha 를 가리키므로
+      // 무조건 push 하면 매 AutoSync 이벤트마다 원격에 빈 wip ref (origin/main sha 지목) 를 만든다. 저장/재시작 때
+      // 정리되긴 해도 세션 중 원격 노이즈 낭비. lazy-fork 시절엔 currentWip===null 로 pushWip 가 자연스레 skip 됐다.
+      if (committed) await this.pushWip();
       return committed ? 'pushed' : 'nochange';
     });
   }
@@ -205,25 +220,26 @@ export class GitManager {
   }
 
   /**
-   * 한 파일의 커밋 이력 (최신순). 저장 이력을 보여주는 ref 우선: 로컬 main → origin/main → HEAD.
-   * (wip 브랜치의 자잘한 자동커밋 노이즈를 피하려 main 을 기준으로 삼는다.)
+   * 한 파일의 커밋 이력 (최신순). 저장 이력을 보여주는 ref 우선: origin/main → 로컬 main → HEAD.
+   * (로컬 main 은 wip merge 흐름 중간에 wip auto-commit 이 낄 수 있어 origin/main 을 진실로 삼는다.)
+   * 자동 wip 커밋(`<token>: <ISO>` 패턴 = flushCommit/adopt/sync-down)은 필터링 —
+   * 사용자가 실제 저장(`저장: <displayName> <ISO>`)한 것과 손수 커밋한 것만 보여준다.
    * read-only 라 큐 우회. ref/파일 없으면 빈 배열.
    */
   async fileHistory(path: string, limit = 50): Promise<FileCommit[]> {
-    const ref = (await this.refExists('refs/heads/main'))
-      ? 'main'
-      : (await this.refExists('refs/remotes/origin/main'))
-        ? 'origin/main'
+    const ref = (await this.refExists('refs/remotes/origin/main'))
+      ? 'origin/main'
+      : (await this.refExists('refs/heads/main'))
+        ? 'main'
         : 'HEAD';
     try {
-      // NUL 구분자로 안전 파싱 (제목·이름에 공백/특수문자 있어도 됨).
       const fmt = '%H%x00%h%x00%an%x00%ad%x00%s';
       const out = await this.git.raw([
         'log',
         `--format=${fmt}`,
         '--date=format-local:%Y-%m-%d %H:%M',
         '-n',
-        String(limit),
+        String(limit * 3), // 필터로 줄어들 여지 감안 (auto-commit 노이즈가 많아도 실제 표시 수 확보)
         ref,
         '--',
         path,
@@ -234,7 +250,9 @@ export class GitManager {
         .map((line) => {
           const [hash, shortHash, author, date, subject = ''] = line.split('\0');
           return { hash, shortHash, author, date, subject };
-        });
+        })
+        .filter((c) => !AUTO_COMMIT_SUBJECT.test(c.subject))
+        .slice(0, limit);
     } catch {
       return [];
     }
@@ -430,8 +448,7 @@ export class GitManager {
       await this.git.raw(['checkout', '-B', 'main']); // 빈 원격 부트스트랩
       await this.deleteOwnWips(); // fork 전 레거시 wip 제거(D/F 충돌 방지) — main 체크아웃 직후라 안전
       this.seedRepoFiles(); // 원격이 없으니 존중할 대상도 없음 — union 드라이버 즉시 시드
-      this.currentWip = null;
-      this.wipPushed = false;
+      await this.forkSessionWip(); // eager fork — 세션 내내 HEAD=wip 로 외부 커밋(Claude/CLI/cron) 이 main 우회
       return;
     }
     // base = 마지막으로 동기화된 상태. 로컬 main 이 있으면 그것을 advance 하지 않고 HEAD 만 올려
@@ -465,16 +482,26 @@ export class GitManager {
     if (!dirty) {
       // 디스크==base. base 가 origin/main 보다 뒤(팀원이 저장)일 수 있으므로 ff-only 로 그 변경을 디스크에 실체화.
       await this.git.raw(['merge', '--ff-only', 'origin/main']).catch(() => undefined);
-      this.currentWip = null;
-      this.wipPushed = false;
+      // eager fork — clean 세션에서도 HEAD=wip 로 두어 외부 도구가 `git commit` 하면 wip 에 착지시킨다.
+      // (편집 없이 종료돼도 다음 세션 시작 시 deleteOwnWips 가 청소한다. 편집 없이 저장 눌러도 finishToMain 경로가 정리.)
+      await this.forkSessionWip();
     } else {
       // base 위 진짜 로컬 편집 → adopt: base(현 HEAD=oldMain)에서 wip fork. origin/main 으로 advance 하지 않는다.
       // 다음 mergeDown(currentWip≠null → merge -X theirs origin/main)이 팀원의 동시 변경과 내 편집을 3-way union.
-      this.currentWip = this.newWipRef();
-      this.wipPushed = false;
-      await this.git.raw(['checkout', '-b', this.currentWip]);
+      await this.forkSessionWip();
       await this.git.commit(`adopt: ${nowIso()}`);
     }
+  }
+
+  /**
+   * 세션 wip 을 현재 HEAD 에서 fork 하고 checkout — currentWip 상태 세팅 포함.
+   * eager 흐름의 공통 진입점: (a) ensureOnMain clean/dirty/empty-remote (b) finishToMain 후속.
+   * 세션 유지 중엔 항상 HEAD=wip 로 두어 외부 커밋(Claude/CLI/cron) 이 main 직행하지 못하게 한다.
+   */
+  private async forkSessionWip(): Promise<void> {
+    this.currentWip = this.newWipRef();
+    this.wipPushed = false;
+    await this.git.raw(['checkout', '-b', this.currentWip]);
   }
 
   /** 기존 .gitattributes 에 union 드라이버가 없으면 경고만(공유 설정 파일이라 내용 변조는 안 함). */
@@ -497,17 +524,22 @@ export class GitManager {
 
   /**
    * flush: 에디터 저장 → add -A → 변경 없으면 skip(이벤트 루프 종결자), 있으면 커밋. 커밋 여부 반환.
-   * 첫 변경(currentWip===null)이면 현 HEAD(main) 기준으로 세션 wip 을 lazy-fork 한다.
+   * 첫 변경이거나 HEAD 가 main 이면(=상태 불일치) 세션 wip 을 lazy-fork.
+   *
+   * [CRITICAL] currentWip 변수만 믿지 않고 실제 HEAD 를 진실의 원천으로 삼는다. finishToMain 이 도중에
+   * 실패하거나 외부 git op(수동 checkout, 다른 툴)로 HEAD 가 main 으로 되돌아간 경우, 그대로 commit 하면
+   * main 이 직접 오염된다(팀원 저장분과의 leak). HEAD===main 이면 currentWip 상태와 무관하게 새 wip fork.
    */
   private async flushCommit(): Promise<boolean> {
     await this.flushEditors();
     await this.git.add(['-A']);
     const status = await this.git.raw(['status', '--porcelain']);
     if (!status.trim()) return false;
-    if (this.currentWip === null) {
+    const head = (await this.git.raw(['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim();
+    if (this.currentWip === null || head === 'main' || head === '') {
       this.currentWip = this.newWipRef();
       this.wipPushed = false; // 새 wip — 아직 원격에 없음
-      await this.git.raw(['checkout', '-b', this.currentWip]); // 현 HEAD(main) 기준 fork
+      await this.git.raw(['checkout', '-b', this.currentWip]);
     }
     await this.git.commit(`${this.deviceId}: ${nowIso()}`);
     return true;
@@ -594,7 +626,11 @@ export class GitManager {
     return 'nochange';
   }
 
-  /** wip 종료: main 을 target(또는 origin/main)으로 두고 HEAD=main(워킹트리 미변경), 현 wip 삭제. */
+  /**
+   * wip 종료 + 후속 세션 wip fork: main 을 target 로 두고 이전 wip 삭제 → **새 세션 wip 을 즉시 fork**.
+   * 저장 직후 HEAD 를 잠시라도 main 에 두면 그 순간의 외부 커밋(Claude/CLI) 이 main 을 직접 오염시키므로,
+   * 이 함수는 항상 HEAD 를 새 wip 으로 끝낸다. 워킹트리는 두 단계 모두 미변경(같은 tree).
+   */
   private async finishToMain(commit: string | null): Promise<void> {
     const wip = this.currentWip;
     const wasPushed = this.wipPushed;
@@ -611,6 +647,8 @@ export class GitManager {
         await this.git.raw(['push', 'origin', '--delete', wip]).catch((e) => this.log(`원격 wip 삭제 실패: ${redact(e)}`));
       }
     }
+    // 저장 후에도 HEAD 를 wip 에 둔다 — main 에 머무는 시간을 최소화해 외부 도구 커밋이 main 직행하는 창구 봉쇄.
+    await this.forkSessionWip();
   }
 
   private async refExists(ref: string): Promise<boolean> {

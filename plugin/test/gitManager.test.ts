@@ -83,7 +83,10 @@ async function main(): Promise<void> {
     mkdirSync(vault2);
     const g2 = newManager(vault2, bare2, 'dev2');
     await g2.ensureRepo(); // union 부재 경고 로그만 — 변조 없음
-    assert(readFileSync(join(vault2, '.gitattributes'), 'utf8') === CUSTOM, '기존 .gitattributes 미변조');
+    // NOTE: Windows autocrlf=true 로컬 환경에서는 checkout 시 LF→CRLF 변환됨 — pre-existing 실패.
+    // 바이트 일치 대신 논리적 일치 검증(줄바꿈 정규화). CI(Linux) 는 원본 그대로 통과.
+    const actualAttrs = readFileSync(join(vault2, '.gitattributes'), 'utf8').replace(/\r\n/g, '\n');
+    assert(actualAttrs === CUSTOM, `기존 .gitattributes 미변조 (got ${JSON.stringify(actualAttrs)})`);
 
     // ── 4) mainFileContent (인라인 데코 diff 기준) ──
     const content = await g1.mainFileContent('note.md');
@@ -148,32 +151,36 @@ async function main(): Promise<void> {
       const gm = newManager(local, bare, 'dev-A');
       await gm.ensureRepo();
 
-      // 로드 직후 idle: HEAD=main, wip 없음
+      // 로드 직후: eager fork → HEAD=wip/<device>/<ts> (편집 없어도 세션 wip 고정)
       const head0 = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-      assert(head0 === 'main', `idle HEAD=main (got ${head0})`);
+      assert(/^wip\/dev-A\/\d+$/.test(head0), `eager fork 후 HEAD=wip (got ${head0})`);
 
-      // 편집 → commitAndPushWip: wip/<device>/<ts> fork + push
+      // 편집 → commitAndPushWip: 이미 세션 wip 위 → 커밋 + push (재-fork 없음)
       writeFileSync(join(local, 'note.md'), '첫 줄\n');
       await gm.commitAndPushWip();
       const headWip = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-      assert(/^wip\/dev-A\/\d+$/.test(headWip), `편집 시 HEAD=wip/dev-A/<ts> (got ${headWip})`);
+      assert(headWip === head0, `편집 후에도 같은 세션 wip 유지 (got ${headWip}, expected ${head0})`);
       const remoteWips = execFileSync('git', ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A/*'], { encoding: 'utf8' }).trim();
       assert(remoteWips.includes(headWip), '원격에 wip 푸시됨');
 
-      // 저장 → origin main 1커밋(squash) + wip 삭제(로컬+원격) + HEAD=main
+      // 저장 → origin main 1커밋(squash) + 이전 세션 wip 삭제(로컬+원격) → 즉시 새 세션 wip fork (eager)
       const save = await gm.squashMergeToMain();
       assert(save === 'saved', `저장 saved (got ${save})`);
       const headAfter = execFileSync('git', ['-C', local, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-      assert(headAfter === 'main', `저장 후 HEAD=main (got ${headAfter})`);
+      assert(/^wip\/dev-A\/\d+$/.test(headAfter), `저장 후 HEAD=새 세션 wip (eager) (got ${headAfter})`);
+      assert(headAfter !== headWip, `새 세션 wip 은 이전과 다른 ts (both got ${headWip})`);
       const localWips = execFileSync('git', ['-C', local, 'branch', '--list', 'wip/*'], { encoding: 'utf8' }).trim();
-      assert(localWips === '', `로컬 wip 삭제됨 (got '${localWips}')`);
+      assert(!localWips.includes(headWip), `이전 로컬 wip(${headWip}) 삭제됨 (got '${localWips}')`);
       const remoteWips2 = execFileSync('git', ['-C', local, 'ls-remote', '--heads', 'origin', 'wip/dev-A/*'], { encoding: 'utf8' }).trim();
-      assert(remoteWips2 === '', '원격 wip 삭제됨');
+      assert(remoteWips2 === '', '원격 wip 삭제됨 (새 세션 wip 은 아직 push 전)');
       // origin main 에 note.md 반영 + 커밋 1개 추가(squash)
       const noteOnMain = execFileSync('git', ['-C', local, 'show', 'origin/main:note.md'], { encoding: 'utf8' });
       assert(noteOnMain.includes('첫 줄'), 'origin main 에 저장 내용 반영');
 
-      // 마이그레이션: 기존 영속 wip/<device> 가 있으면 로드 시 삭제
+      // 마이그레이션: 기존 영속 wip/<device> 가 있으면 로드 시 삭제.
+      // 준비: eager fork 로 남은 wip/dev-A/<ts>(=headAfter) 를 지워 D/F 없이 레거시 wip/dev-A 를 만들 수 있게 한다.
+      execFileSync('git', ['-C', local, 'checkout', 'main']);
+      execFileSync('git', ['-C', local, 'branch', '-D', headAfter]);
       execFileSync('git', ['-C', local, 'branch', 'wip/dev-A', 'main']); // 레거시 영속 브랜치 모사
       execFileSync('git', ['-C', local, 'push', '-q', 'origin', 'wip/dev-A']);
       const gm2 = newManager(local, bare, 'dev-A');
@@ -269,12 +276,15 @@ async function main(): Promise<void> {
         readFileSync(join(vaultA, 'note.md'), 'utf8').trim() === 'v2',
         '재연결 후 디스크==v2(팀원 저장분 실체화)',
       );
-      // (b) HEAD == main (idle)
+      // (b) HEAD == eager 세션 wip (편집 없어도 세션 wip 고정)
       const head = execFileSync('git', ['-C', vaultA, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
-      assert(head === 'main', `재연결 후 HEAD=main (got ${head})`);
-      // (c) wip 미생성 (adopt 오탐 없음)
-      const wips = execFileSync('git', ['-C', vaultA, 'branch', '--list', 'wip/*'], { encoding: 'utf8' }).trim();
-      assert(wips === '', `재연결 시 wip 미생성 (got '${wips}')`);
+      assert(/^wip\/dev-A\/\d+$/.test(head), `재연결 후 HEAD=eager 세션 wip (got ${head})`);
+      // (c) clean 이므로 adopt 커밋 없이 fresh fork (base 위 0 커밋)
+      const wipsLines = execFileSync('git', ['-C', vaultA, 'branch', '--list', 'wip/*'], { encoding: 'utf8' })
+        .split('\n').filter((l) => l.trim().length > 0);
+      assert(wipsLines.length === 1, `재연결 시 새 세션 wip 하나만 (got ${JSON.stringify(wipsLines)})`);
+      const wipAhead = execFileSync('git', ['-C', vaultA, 'rev-list', '--count', 'main..HEAD'], { encoding: 'utf8' }).trim();
+      assert(wipAhead === '0', `clean → wip 은 main 위로 커밋 없이 fork (adopt 오탐 없음) (got ${wipAhead})`);
       // (d) origin(bare)/main 여전히 == v2 (되돌려지지 않음)
       assert(
         execFileSync('git', ['-C', bare, 'show', 'main:note.md'], { encoding: 'utf8' }).trim() === 'v2',
@@ -363,7 +373,12 @@ async function main(): Promise<void> {
       const saved = await gA.squashMergeToMain();
       assert(saved === 'saved', `dev-A v1 저장 (got ${saved})`);
 
-      // 구버전 빌드가 남긴 레거시 영속 wip/dev-A 모사(ts 없음) — 로컬 + 원격
+      // 구버전 빌드가 남긴 레거시 영속 wip/dev-A 모사(ts 없음) — 로컬 + 원격.
+      // 준비: eager fork 로 남은 세션 wip/dev-A/<ts> 를 먼저 지워 D/F 없이 레거시 이름을 만들 수 있게 한다.
+      execFileSync('git', ['-C', vault, 'checkout', 'main']);
+      const eagerWips = execFileSync('git', ['-C', vault, 'branch', '--list', 'wip/dev-A/*'], { encoding: 'utf8' })
+        .split('\n').map((l) => l.replace(/^\*?\s*/, '').trim()).filter(Boolean);
+      for (const w of eagerWips) execFileSync('git', ['-C', vault, 'branch', '-D', w]);
       execFileSync('git', ['-C', vault, 'branch', 'wip/dev-A', 'main']);
       execFileSync('git', ['-C', vault, 'push', '-q', 'origin', 'wip/dev-A']);
 
