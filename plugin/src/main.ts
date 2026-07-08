@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, FileSystemAdapter, Notice, Platform, debounce } from 'obsidian';
+import { Plugin, MarkdownView, FileSystemAdapter, Notice, Platform, Menu, TFile, debounce } from 'obsidian';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import type { EditorView } from '@codemirror/view';
@@ -13,7 +13,8 @@ import {
 import { GitManager } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
 import { Heartbeat } from './sync/Heartbeat';
-import { StatusBar } from './ui/StatusBar';
+import { StatusBar, outgoingSummary, statusLabel } from './ui/StatusBar';
+import type { OutgoingFile } from './ui/StatusBar';
 import { HistoryPanel, VIEW_TYPE_OGS_HISTORY } from './ui/HistoryPanel';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
 import { blameGutter, pushBlame } from './editor/BlameGutter';
@@ -61,7 +62,9 @@ export default class GitSyncPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.statusBar = new StatusBar(this.addStatusBarItem());
+    this.statusBar = new StatusBar(this.addStatusBarItem(), (files, evt) =>
+      this.showOutgoingMenu(files, evt),
+    );
     this.addSettingTab(new GitSyncSettingTab(this.app, this));
 
     // 협업 인라인 데코레이션 + Cmd/Ctrl+S 저장 keymap (CM6, Source/라이브프리뷰).
@@ -234,23 +237,50 @@ export default class GitSyncPlugin extends Plugin {
     if (!this.git) return;
     try {
       const outgoing = await this.git.outgoingFiles();
-      this.statusBar?.setOutgoing(outgoing.length);
-      this.updateSaveBadge(outgoing.length);
+      this.statusBar?.setOutgoing(outgoing);
+      this.updateSaveBadge(outgoing);
     } catch {
       /* 오프라인/일시 오류 — 상태 유지 */
     }
   }
 
-  private updateSaveBadge(count: number): void {
+  private updateSaveBadge(files: OutgoingFile[]): void {
     const badge = this.saveBadge;
     if (!badge) return;
-    if (count > 0) {
+    if (files.length > 0) {
       const key = Platform.isMacOS ? '⌘⇧S' : 'Ctrl+Shift+S';
-      badge.setText(`● ${count}개 저장 안 됨 — 저장 (${key})`);
+      badge.setText(`● ${files.length}개 저장 안 됨 — 저장 (${key})`);
+      badge.setAttr('title', `클릭하면 저장\n${outgoingSummary(files)}`);
       badge.show();
     } else {
       badge.hide();
     }
+  }
+
+  /** 상태바 "저장 대기 N" 클릭 → 미저장 파일 목록 메뉴. 파일 클릭 시 열기. */
+  private showOutgoingMenu(files: OutgoingFile[], evt: MouseEvent): void {
+    const MAX = 15;
+    const menu = new Menu();
+    for (const f of files.slice(0, MAX)) {
+      menu.addItem((item) => {
+        item.setTitle(`${statusLabel(f.status)} · ${f.path}`);
+        item.setIcon(f.status.startsWith('D') ? 'trash-2' : 'file-text');
+        if (!f.status.startsWith('D')) {
+          item.onClick(() => {
+            const af = this.app.vault.getAbstractFileByPath(f.path);
+            if (af instanceof TFile) void this.app.workspace.getLeaf().openFile(af);
+          });
+        }
+      });
+    }
+    if (files.length > MAX) {
+      menu.addItem((item) => item.setTitle(`…외 ${files.length - MAX}개`).setDisabled(true));
+    }
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item.setTitle('지금 저장 — 공식본에 반영').setIcon('save').onClick(() => void this.publishNow()),
+    );
+    menu.showAtMouseEvent(evt);
   }
 
   private refreshPanels(): void {
