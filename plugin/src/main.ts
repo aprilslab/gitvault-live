@@ -80,9 +80,9 @@ export default class GitSyncPlugin extends Plugin {
     // 파일 이력 패널 (활성 노트의 git 커밋 이력).
     this.registerView(VIEW_TYPE_OGS_HISTORY, (leaf) => new HistoryPanel(leaf, () => this.git));
 
-    this.addRibbonIcon('git-branch', 'Git Sync: 지금 동기화', () => void this.applySettings());
-    this.addRibbonIcon('history', 'Git Sync: 파일 이력', () => void this.activateHistoryPanel());
-    this.addRibbonIcon('save', 'Git Sync: 저장(공식본에 반영)', () => void this.publishNow());
+    this.addRibbonIcon('git-branch', 'GitVault Live: 지금 동기화', () => void this.applySettings());
+    this.addRibbonIcon('history', 'GitVault Live: 파일 이력', () => void this.activateHistoryPanel());
+    this.addRibbonIcon('save', 'GitVault Live: 저장(공식본에 반영)', () => void this.publishNow());
     this.addCommand({
       id: 'ogs-sync-now',
       name: '지금 동기화 / 다시 연결',

@@ -1,4 +1,6 @@
-# obsidian-git-sync
+# GitVault Live
+
+> Obsidian 플러그인 · 저장소 `obsidian-git-sync` (플러그인 id 동일).
 
 Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 문서를 만드는 **에이전트(헤드리스 git 클라이언트)** 와 Obsidian 앱 사용자가 같은 vault(=git repo, 1:1)를 공유한다. 대상 사용자는 **git 비개발자** — 브랜치/커밋/머지는 UI 뒤에 완전히 숨긴다.
 
