@@ -4,7 +4,7 @@ import { join } from 'path';
 import { PromiseQueue } from './PromiseQueue';
 import { isStalePeer } from '../editor/peerPresence';
 
-const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
+const IDENTITY_EMAIL_DOMAIN = 'gitvault-live.local';
 const GIT_BLOCK_TIMEOUT_MS = 20_000;
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git 빈 트리 sha (origin/main 부재 시 diff 기준)
 const SUPPRESS_GRACE_MS = 2_000; // git 워킹트리 쓰기 후 vault 이벤트가 늦게 도착하는 것까지 흡수

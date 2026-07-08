@@ -7,7 +7,7 @@
 1. **테스트용 원격 repo** — 빈 GitHub(또는 GitLab/Gitea) repo 하나. 쓰기 토큰 발급.
    - (기존 LiveSync `wiki` vault·실 문서 repo 는 건드리지 말 것 — 이중 동기화 충돌.)
 2. **플러그인 로드** — `npm run build -w plugin` → `plugin/{main.js,manifest.json,styles.css}` 를
-   `<테스트vault>/.obsidian/plugins/obsidian-git-sync/` 에 복사. Obsidian 에서 활성화 →
+   `<테스트vault>/.obsidian/plugins/gitvault-live/` 에 복사. Obsidian 에서 활성화 →
    설정에 repo URL + 토큰 입력 → **[연결 테스트]** 성공 확인.
 3. **에이전트 데몬** — 별도 디렉터리를 vault 로 삼아:
    ```bash

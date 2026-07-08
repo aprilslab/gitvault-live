@@ -3,7 +3,7 @@ import builtins from 'builtin-modules';
 
 const production = process.argv[2] === 'production';
 
-const banner = `/* obsidian-git-sync — esbuild bundle. 소스: src/. 직접 편집 금지. */`;
+const banner = `/* gitvault-live — esbuild bundle. 소스: src/. 직접 편집 금지. */`;
 
 const ctx = await esbuild.context({
   entryPoints: ['src/main.ts'],

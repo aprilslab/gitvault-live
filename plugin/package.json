@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-git-sync-plugin",
+  "name": "gitvault-live-plugin",
   "version": "0.1.0",
   "private": true,
   "description": "Obsidian 데스크톱 플러그인 — 백그라운드 git 자동 동기화 + 들어온 변경 인라인 표시 + 저장(squash-to-main).",

@@ -189,7 +189,7 @@ export default class GitSyncPlugin extends Plugin {
       deviceId: this.settings.deviceId,
       displayName,
       flushEditors,
-      log: (m) => console.error('[obsidian-git-sync]', m),
+      log: (m) => console.error('[gitvault-live]', m),
     });
 
     this.statusBar?.set('syncing');

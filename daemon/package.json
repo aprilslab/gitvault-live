@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-git-sync-daemon",
+  "name": "gitvault-live-daemon",
   "version": "0.1.0",
   "private": true,
   "description": "에이전트(헤드리스) vault git 클라이언트 — 변경 감시 → main 연속 commit/push, sync-down.",

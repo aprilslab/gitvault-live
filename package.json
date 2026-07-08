@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-git-sync",
+  "name": "gitvault-live",
   "version": "0.1.0",
   "private": true,
   "description": "Git-based Obsidian sync — desktop plugin (auto-sync, inline collab decorations, squash-to-main) + headless agent git client. Standard hosted git (HTTPS+token) as SoT.",

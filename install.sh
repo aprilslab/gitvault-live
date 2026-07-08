@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# obsidian-git-sync 설치 (Linux / macOS)
+# gitvault-live 설치 (Linux / macOS)
 #
 #   플러그인:  ./install.sh plugin --vault ~/Documents/my-vault
 #   daemon:    ./install.sh daemon --vault <vault> --remote https://github.com/OWNER/REPO.git
@@ -12,7 +12,7 @@
 #   --remote <url>    daemon: 대상 repo URL (origin 미설정 시). 토큰은 아래 --token 또는 git credential
 #   --token  <tok>    daemon: 액세스 토큰(선택). 주면 remote URL 에 삽입. 생략 시 기존 git 자격증명 사용
 #   --name   <name>   daemon: 인스턴스 이름 (기본 vault 폴더명). 한 머신에 vault 여러 개면 이걸로 분리
-#                     → 서비스 obsidian-git-sync@<name>, env /etc/obsidian-git-sync/<name>.env
+#                     → 서비스 gitvault-live@<name>, env /etc/gitvault-live/<name>.env
 #   --device <id>     daemon: 기기 식별자 (기본 <hostname>-<name>)
 #   --repo   <url>    소스 repo (기본 공개 repo). 로컬 clone 에서 실행 시 무시
 set -euo pipefail
@@ -48,10 +48,10 @@ have npm  || die "npm 필요"
 OS="$(uname -s)"  # Linux / Darwin
 
 # ── 소스 확보: repo 안이면 그대로, 아니면 clone ──────────────────────────
-if [ -f "package.json" ] && grep -q '"obsidian-git-sync"' package.json 2>/dev/null; then
+if [ -f "package.json" ] && grep -q '"gitvault-live"' package.json 2>/dev/null; then
   SRC="$(pwd)"
 else
-  SRC="${TMPDIR:-/tmp}/obsidian-git-sync-src"
+  SRC="${TMPDIR:-/tmp}/gitvault-live-src"
   info "소스 clone: $SRC_REPO"
   rm -rf "$SRC"; git clone --depth 1 -q "$SRC_REPO" "$SRC"
 fi
@@ -63,12 +63,12 @@ npm run build --silent
 
 # ── 플러그인 설치 ──────────────────────────────────────────────────────
 if [ "$MODE" = "plugin" ]; then
-  DEST="$VAULT/.obsidian/plugins/obsidian-git-sync"
+  DEST="$VAULT/.obsidian/plugins/gitvault-live"
   [ -d "$VAULT/.obsidian" ] || die "vault 에 .obsidian 없음: $VAULT (Obsidian 으로 한 번 연 폴더인지 확인)"
   mkdir -p "$DEST"
   cp plugin/main.js plugin/manifest.json plugin/styles.css "$DEST/"
   echo "✓ 플러그인 설치됨: $DEST"
-  echo "  다음: Obsidian → 설정 → 커뮤니티 플러그인 → 제한모드 해제 → obsidian-git-sync 활성화 → repo URL+토큰 입력 → [연결 테스트]"
+  echo "  다음: Obsidian → 설정 → 커뮤니티 플러그인 → 제한모드 해제 → gitvault-live 활성화 → repo URL+토큰 입력 → [연결 테스트]"
   exit 0
 fi
 
@@ -94,9 +94,9 @@ if [ -z "$REMOTE_EFF" ]; then
 fi
 info "인스턴스: $NAME (device=$DEVICE, vault=$VAULT)"
 
-sudo mkdir -p /opt/obsidian-git-sync /etc/obsidian-git-sync
-sudo cp daemon/dist/index.js /opt/obsidian-git-sync/daemon.js
-ENVF="/etc/obsidian-git-sync/$NAME.env"    # vault별 env
+sudo mkdir -p /opt/gitvault-live /etc/gitvault-live
+sudo cp daemon/dist/index.js /opt/gitvault-live/daemon.js
+ENVF="/etc/gitvault-live/$NAME.env"    # vault별 env
 sudo tee "$ENVF" >/dev/null <<ENV
 VAULT_PATH=$VAULT
 REMOTE=$REMOTE_EFF
@@ -106,18 +106,18 @@ ENV
 sudo chmod 600 "$ENVF"
 
 if [ "$OS" = "Linux" ]; then
-  have systemctl || die "systemd 없음 — 수동 실행: VAULT_PATH=$VAULT REMOTE=... node /opt/obsidian-git-sync/daemon.js"
-  # 템플릿 유닛(%i=인스턴스명) — 한 번 설치하면 vault 마다 obsidian-git-sync@<name> 로 여러 개 기동 가능
-  sudo tee /etc/systemd/system/obsidian-git-sync@.service >/dev/null <<UNIT
+  have systemctl || die "systemd 없음 — 수동 실행: VAULT_PATH=$VAULT REMOTE=... node /opt/gitvault-live/daemon.js"
+  # 템플릿 유닛(%i=인스턴스명) — 한 번 설치하면 vault 마다 gitvault-live@<name> 로 여러 개 기동 가능
+  sudo tee /etc/systemd/system/gitvault-live@.service >/dev/null <<UNIT
 [Unit]
-Description=obsidian-git-sync daemon (%i vault)
+Description=gitvault-live daemon (%i vault)
 After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
 Environment=HOME=$HOME
-EnvironmentFile=/etc/obsidian-git-sync/%i.env
-ExecStart=$(command -v node) /opt/obsidian-git-sync/daemon.js
+EnvironmentFile=/etc/gitvault-live/%i.env
+ExecStart=$(command -v node) /opt/gitvault-live/daemon.js
 Restart=always
 RestartSec=5
 User=$(id -un)
@@ -126,11 +126,11 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 UNIT
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "obsidian-git-sync@$NAME"
-  echo "✓ daemon 상주 시작 (systemd): obsidian-git-sync@$NAME"
-  echo "  로그: journalctl -u obsidian-git-sync@$NAME -f   중지: sudo systemctl disable --now obsidian-git-sync@$NAME"
+  sudo systemctl enable --now "gitvault-live@$NAME"
+  echo "✓ daemon 상주 시작 (systemd): gitvault-live@$NAME"
+  echo "  로그: journalctl -u gitvault-live@$NAME -f   중지: sudo systemctl disable --now gitvault-live@$NAME"
 elif [ "$OS" = "Darwin" ]; then
-  LABEL="com.obsidian-git-sync.$NAME"          # vault별 label
+  LABEL="com.gitvault-live.$NAME"          # vault별 label
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   mkdir -p "$HOME/Library/LaunchAgents"
   cat > "$PLIST" <<PL
@@ -139,7 +139,7 @@ elif [ "$OS" = "Darwin" ]; then
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array>
-    <string>$(command -v node)</string><string>/opt/obsidian-git-sync/daemon.js</string>
+    <string>$(command -v node)</string><string>/opt/gitvault-live/daemon.js</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>VAULT_PATH</key><string>$VAULT</string>

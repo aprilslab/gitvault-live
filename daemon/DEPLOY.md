@@ -18,19 +18,19 @@
 npm run build -w daemon        # → daemon/dist/index.js (~220kb, 의존성 포함)
 
 # 2. 서버로 복사
-scp daemon/dist/index.js <server>:/opt/obsidian-git-sync/daemon.js
+scp daemon/dist/index.js <server>:/opt/gitvault-live/daemon.js
 
 # 3. 서버에서 설정
-sudo mkdir -p /etc/obsidian-git-sync
-sudo cp deploy/daemon.env.example /etc/obsidian-git-sync/daemon.env
-sudo chmod 600 /etc/obsidian-git-sync/daemon.env
+sudo mkdir -p /etc/gitvault-live
+sudo cp deploy/daemon.env.example /etc/gitvault-live/daemon.env
+sudo chmod 600 /etc/gitvault-live/daemon.env
 # daemon.env 편집: VAULT_PATH / REMOTE(토큰 포함) / DEVICE_ID
 
 # 4. systemd 등록
-sudo cp deploy/obsidian-git-sync.service /etc/systemd/system/
+sudo cp deploy/gitvault-live.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now obsidian-git-sync
-journalctl -u obsidian-git-sync -f
+sudo systemctl enable --now gitvault-live
+journalctl -u gitvault-live -f
 ```
 
 ## 검증 (E2E)

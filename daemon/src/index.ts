@@ -5,7 +5,7 @@ import { startWatcher } from './watcher';
 async function main(): Promise<void> {
   const cfg = loadConfig();
   console.log(
-    `[obsidian-git-sync] 에이전트 git 클라이언트 시작 device=${cfg.deviceId ?? '(auto)'} ` +
+    `[gitvault-live] 에이전트 git 클라이언트 시작 device=${cfg.deviceId ?? '(auto)'} ` +
       `vault=${cfg.vaultPath} debounce=${cfg.debounceMs}ms → push origin main`,
   );
 
@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const watcher = startWatcher(cfg.vaultPath, () => committer.onChange());
 
   const shutdown = async (sig: string): Promise<void> => {
-    console.log(`[obsidian-git-sync] ${sig} 수신 — 종료`);
+    console.log(`[gitvault-live] ${sig} 수신 — 종료`);
     committer.stop();
     await watcher.close();
     process.exit(0);
@@ -24,6 +24,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[obsidian-git-sync] 데몬 치명적 오류:', err);
+  console.error('[gitvault-live] 데몬 치명적 오류:', err);
   process.exit(1);
 });

@@ -1,6 +1,6 @@
 # GitVault Live
 
-> Obsidian 플러그인 · 저장소 `obsidian-gitvault-live` · 플러그인 id `obsidian-git-sync`.
+> Obsidian 플러그인 · 저장소 `obsidian-gitvault-live` · 플러그인 id `gitvault-live`.
 
 Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 문서를 만드는 **에이전트(헤드리스 git 클라이언트)** 와 Obsidian 앱 사용자가 같은 vault(=git repo, 1:1)를 공유한다. 대상 사용자는 **git 비개발자** — 브랜치/커밋/머지는 UI 뒤에 완전히 숨긴다.
 
@@ -77,8 +77,8 @@ curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-gitvault-live/ma
 
 daemon 서비스는 **vault 이름별 인스턴스**로 등록된다(기본 = vault 폴더명). 한 머신에서 vault 여러 개를 각각 돌리려면 그대로 여러 번 실행하거나 `--name`/`-Name` 으로 이름을 지정:
 ```bash
-curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → obsidian-git-sync@wiki
-curl -fsSL .../install.sh | bash -s -- daemon --vault ~/notes --name notes  # → obsidian-git-sync@notes
+curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → gitvault-live@wiki
+curl -fsSL .../install.sh | bash -s -- daemon --vault ~/notes --name notes  # → gitvault-live@notes
 ```
 
 ### 수동 설치

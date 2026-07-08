@@ -4,7 +4,7 @@ import { join } from 'path';
 import { PromiseQueue } from './queue';
 import { defaultDeviceId, type DaemonConfig } from './config';
 
-const IDENTITY_EMAIL_DOMAIN = 'obsidian-git-sync.local';
+const IDENTITY_EMAIL_DOMAIN = 'gitvault-live.local';
 const DEVICE_ID_FILE = 'ogs-device-id'; // .git/ 하위 — 동기화되지 않고 기기 고정
 // 플러그인(Obsidian) 생존 신호 파일. 플러그인 Heartbeat 가 .git/ 에 epoch ms 를 주기 기록한다.
 // 신선하면 Obsidian 이 vault 를 소유 중 → daemon 은 commit/merge 를 후퇴한다(양쪽이 같은 .git·워킹트리
@@ -300,5 +300,5 @@ function sleep(ms: number): Promise<void> {
 }
 
 function logErr(label: string) {
-  return (err: unknown) => console.error(`[obsidian-git-sync] ${label} 실패:`, err);
+  return (err: unknown) => console.error(`[gitvault-live] ${label} 실패:`, err);
 }

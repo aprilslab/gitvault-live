@@ -1,10 +1,10 @@
-# obsidian-git-sync 설치 (Windows / PowerShell)
+# gitvault-live 설치 (Windows / PowerShell)
 #
 #   플러그인:  .\install.ps1 plugin -Vault "C:\Users\me\Documents\my-vault"
 #   daemon:    .\install.ps1 daemon -Vault "C:\vault" -Remote "https://github.com/OWNER/REPO.git"
 #
 # -Name <이름>  daemon 인스턴스 이름 (기본 vault 폴더명). vault 여러 개면 이걸로 분리
-#               → 작업 obsidian-git-sync-<name>, 배치/로그도 이름별
+#               → 작업 gitvault-live-<name>, 배치/로그도 이름별
 #
 # 원격 실행(공개 repo):
 #   irm https://raw.githubusercontent.com/aprilslab/obsidian-gitvault-live/main/install.ps1 | iex; # 인자 필요 시 아래처럼
@@ -32,10 +32,10 @@ if (-not (Have npm))  { Die "npm 필요" }
 if (-not $Vault) { Die "-Vault <path> 필수" }
 
 # ── 소스 확보 ──────────────────────────────────────────────
-if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern 'obsidian-git-sync' -Quiet)) {
+if ((Test-Path package.json) -and (Select-String -Path package.json -Pattern 'gitvault-live' -Quiet)) {
   $Src = (Get-Location).Path
 } else {
-  $Src = Join-Path $env:TEMP "obsidian-git-sync-src"
+  $Src = Join-Path $env:TEMP "gitvault-live-src"
   Info "소스 clone: $Repo"
   if (Test-Path $Src) { Remove-Item -Recurse -Force $Src }
   git clone --depth 1 -q $Repo $Src
@@ -49,11 +49,11 @@ npm run build --silent
 # ── 플러그인 ────────────────────────────────────────────────
 if ($Mode -eq 'plugin') {
   if (-not (Test-Path (Join-Path $Vault ".obsidian"))) { Die "vault 에 .obsidian 없음: $Vault (Obsidian 으로 한 번 연 폴더인지 확인)" }
-  $Dest = Join-Path $Vault ".obsidian\plugins\obsidian-git-sync"
+  $Dest = Join-Path $Vault ".obsidian\plugins\gitvault-live"
   New-Item -ItemType Directory -Force -Path $Dest | Out-Null
   Copy-Item plugin\main.js, plugin\manifest.json, plugin\styles.css $Dest -Force
   Write-Host "✓ 플러그인 설치됨: $Dest"
-  Write-Host "  다음: Obsidian → 설정 → 커뮤니티 플러그인 → 제한모드 해제 → obsidian-git-sync 활성화 → repo URL+토큰 입력 → [연결 테스트]"
+  Write-Host "  다음: Obsidian → 설정 → 커뮤니티 플러그인 → 제한모드 해제 → gitvault-live 활성화 → repo URL+토큰 입력 → [연결 테스트]"
   exit 0
 }
 
@@ -73,13 +73,13 @@ if (-not $RemoteEff) {
 }
 Info "인스턴스: $Name (device=$Device, vault=$Vault)"
 
-$Base = "C:\obsidian-git-sync"
+$Base = "C:\gitvault-live"
 New-Item -ItemType Directory -Force -Path $Base | Out-Null
 Copy-Item daemon\dist\index.js (Join-Path $Base "daemon.js") -Force
 $NodeExe = (Get-Command node).Source
 
 # vault별 실행 배치 + 로그 + 작업명
-$Task = "obsidian-git-sync-$Name"
+$Task = "gitvault-live-$Name"
 $Cmd  = Join-Path $Base "run-daemon-$Name.cmd"
 $Log  = "$Base\daemon-$Name.log"
 @"

@@ -30,7 +30,7 @@ cd daemon && npm run typecheck && cd ..
 ```bash
 npm run build
 # 산출물 복사:
-#   plugin/{main.js,manifest.json,styles.css} → <test-vault>/.obsidian/plugins/obsidian-git-sync/
+#   plugin/{main.js,manifest.json,styles.css} → <test-vault>/.obsidian/plugins/gitvault-live/
 ```
 
 테스트는 **버릴 수 있는 별도 vault** 로. 실제 노트 vault 에 붙이지 말 것. LiveSync·Obsidian Sync 등 다른 동기화와 병행 금지.

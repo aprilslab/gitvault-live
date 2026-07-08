@@ -1,18 +1,18 @@
-# systemd 유닛 — /etc/systemd/system/obsidian-git-sync.service 로 복사
+# systemd 유닛 — /etc/systemd/system/gitvault-live.service 로 복사
 #
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now obsidian-git-sync
-#   journalctl -u obsidian-git-sync -f
+#   sudo systemctl enable --now gitvault-live
+#   journalctl -u gitvault-live -f
 [Unit]
-Description=obsidian-git-sync daemon (vault → git bridge)
+Description=gitvault-live daemon (vault → git bridge)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 # REMOTE 에 토큰이 들어가므로 env 파일로 분리 (chmod 600)
-EnvironmentFile=/etc/obsidian-git-sync/daemon.env
-ExecStart=/usr/bin/node /opt/obsidian-git-sync/daemon.js
+EnvironmentFile=/etc/gitvault-live/daemon.env
+ExecStart=/usr/bin/node /opt/gitvault-live/daemon.js
 Restart=always
 RestartSec=5
 # vault 경로에 쓸 수 있는 전용 계정 권장 (root 실행 금지)
