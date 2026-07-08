@@ -31,3 +31,5 @@ plugin/data.json
 daemon/deploy/daemon.env
 # 로컬 vault 설정
 .obsidian/
+# 로컬 내부 노트(handoff·설계 히스토리) — 공개 안 함
+notes/
