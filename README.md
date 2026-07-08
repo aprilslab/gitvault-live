@@ -43,12 +43,47 @@ Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 
 
 ## 설치
 
-OS 별(macOS/Windows 플러그인, Linux/macOS/Windows daemon) 전체 절차는 [`INSTALL.md`](./INSTALL.md).
+**요구사항:** Node 18+, git CLI.
 
-1. 관리자: 대상 repo 생성 + `templates/` 의 `.gitattributes`/`.gitignore` 를 루트에 커밋(또는 플러그인이 빈 repo seed). 에이전트 쪽은 `daemon/` 을 `VAULT_PATH`/`REMOTE`(HTTPS+토큰) env 로 구동 — 상주 배포는 [`daemon/DEPLOY.md`](./daemon/DEPLOY.md).
-2. 사용자: 플러그인 설치 → 설정에서 repo URL + 토큰 입력 → [연결 테스트]. 이후 전 과정 자동.
+### 빠른 설치 (스크립트)
 
-비개발자용 상세 절차는 [`docs/ONBOARDING.md`](./docs/ONBOARDING.md).
+스크립트가 소스를 받아 빌드까지 한다 — repo 를 clone 하지 않고 한 줄로 실행 가능.
+
+**플러그인 (macOS / Linux)** — `<vault>` 는 Obsidian 으로 한 번 연 vault 폴더:
+```bash
+curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.sh | bash -s -- plugin --vault <vault>
+```
+
+**플러그인 (Windows, PowerShell)**:
+```powershell
+iwr -useb https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.ps1 -OutFile install.ps1
+.\install.ps1 plugin -Vault "C:\path\to\vault"
+```
+
+**daemon (서버)** — 파일 변경을 감시해 main 에 자동 반영. 상주 서비스로 등록:
+```bash
+# Linux(systemd)/macOS(launchd). --remote 생략 시 vault 의 기존 git 자격증명 재사용
+curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.sh | \
+  bash -s -- daemon --vault /srv/wiki --remote https://github.com/OWNER/REPO.git --token <PAT>
+```
+```powershell
+# Windows(작업 스케줄러)
+.\install.ps1 daemon -Vault "C:\vault" -Remote "https://github.com/OWNER/REPO.git" -Token <PAT>
+```
+
+설치 후 플러그인은 Obsidian 설정에서 repo URL+토큰 입력 → [연결 테스트]. daemon 은 바로 상주 시작.
+
+### 수동 설치
+
+clone 후 직접:
+```bash
+git clone https://github.com/aprilslab/obsidian-git-sync.git
+cd obsidian-git-sync
+npm install && npm run build
+./install.sh plugin --vault <vault>     # 또는 daemon
+```
+
+OS 별 상세 절차·서비스 관리·주의사항은 [`INSTALL.md`](./INSTALL.md), daemon 상주 배포는 [`daemon/DEPLOY.md`](./daemon/DEPLOY.md), 비개발자용은 [`docs/ONBOARDING.md`](./docs/ONBOARDING.md).
 
 ## 기여
 
