@@ -28,7 +28,7 @@ export const DEFAULT_SETTINGS: OgsSettings = {
   token: '',
   deviceId: '',
   autoSyncSeconds: 5,
-  showInlineChanges: false,
+  showInlineChanges: true,
   showLineBlame: true,
   displayName: '',
 };
@@ -155,11 +155,22 @@ export class GitSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('변경 라인 인라인 표시 (실험적)')
+      .setName('변경 라인 인라인 표시')
       .setDesc('공식본(main)과 다른 라인을 에디터 본문에 파란색으로 표시. 타이핑에 즉시 반응(인메모리 diff).')
       .addToggle((t) =>
         t.setValue(s.showInlineChanges).onChange(async (v) => {
           s.showInlineChanges = v;
+          await this.plugin.saveSettings();
+          await this.plugin.applySettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('수정한 사람 표시 (blame 거터)')
+      .setDesc('각 줄을 공식본(main)에 마지막으로 저장한 사람과 시각을 좌측 거터에 표시.')
+      .addToggle((t) =>
+        t.setValue(s.showLineBlame).onChange(async (v) => {
+          s.showLineBlame = v;
           await this.plugin.saveSettings();
           await this.plugin.applySettings();
         }),
