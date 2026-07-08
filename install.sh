@@ -5,7 +5,7 @@
 #   daemon:    ./install.sh daemon --vault <vault> --remote https://github.com/OWNER/REPO.git
 #
 # curl 원격 실행(공개 repo):
-#   curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.sh | bash -s -- plugin --vault ~/vault
+#   curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-gitvault-live/main/install.sh | bash -s -- plugin --vault ~/vault
 #
 # 플래그:
 #   --vault  <path>   플러그인=Obsidian vault 폴더 / daemon=감시할 vault 폴더 (필수)
@@ -17,7 +17,7 @@
 #   --repo   <url>    소스 repo (기본 공개 repo). 로컬 clone 에서 실행 시 무시
 set -euo pipefail
 
-REPO_URL_DEFAULT="https://github.com/aprilslab/obsidian-git-sync.git"
+REPO_URL_DEFAULT="https://github.com/aprilslab/obsidian-gitvault-live.git"
 MODE="${1:-}"; shift || true
 VAULT=""; REMOTE=""; TOKEN=""; DEVICE=""; NAME=""; SRC_REPO="$REPO_URL_DEFAULT"
 

@@ -7,8 +7,8 @@
 #               → 작업 obsidian-git-sync-<name>, 배치/로그도 이름별
 #
 # 원격 실행(공개 repo):
-#   irm https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.ps1 | iex; # 인자 필요 시 아래처럼
-#   iwr -useb https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.ps1 -OutFile install.ps1; .\install.ps1 plugin -Vault "C:\...\vault"
+#   irm https://raw.githubusercontent.com/aprilslab/obsidian-gitvault-live/main/install.ps1 | iex; # 인자 필요 시 아래처럼
+#   iwr -useb https://raw.githubusercontent.com/aprilslab/obsidian-gitvault-live/main/install.ps1 -OutFile install.ps1; .\install.ps1 plugin -Vault "C:\...\vault"
 
 param(
   [Parameter(Position=0)][ValidateSet('plugin','daemon')][string]$Mode,
@@ -17,7 +17,7 @@ param(
   [string]$Token,
   [string]$Device,
   [string]$Name,
-  [string]$Repo = "https://github.com/aprilslab/obsidian-git-sync.git"
+  [string]$Repo = "https://github.com/aprilslab/obsidian-gitvault-live.git"
 )
 $ErrorActionPreference = "Stop"
 function Die($m){ Write-Error "✗ $m"; exit 1 }
