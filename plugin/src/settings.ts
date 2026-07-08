@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { simpleGit } from 'simple-git';
 import { hostname, homedir, userInfo } from 'os';
 import type GitSyncPlugin from './main';
+import { detectDaemon, installDaemonWindows, type DaemonStatus } from './sync/DaemonInstall';
 
 /**
  * blame·presence 표시이름 자동 감지 (설정의 displayName 이 비었을 때 사용).
@@ -47,6 +48,8 @@ export interface OgsSettings {
   showLineBlame: boolean;
   /** 협업 표시이름(blame·작성중 배지에 노출). 비우면 deviceId 사용. git user.name 으로 쓰임. */
   displayName: string;
+  /** 로컬 daemon(백그라운드 커밋 상주)을 사용/설치 안내를 활성화. Off 면 daemon 미설치 안내를 표시하지 않는다. */
+  daemonEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: OgsSettings = {
@@ -58,6 +61,7 @@ export const DEFAULT_SETTINGS: OgsSettings = {
   showInlineChanges: true,
   showLineBlame: true,
   displayName: '',
+  daemonEnabled: true,
 };
 
 function slug(s: string): string {
@@ -185,6 +189,25 @@ export class GitSyncSettingTab extends PluginSettingTab {
         }),
       );
 
+    // ── 로컬 daemon 토글 + 상태 + 설치 버튼 ──
+    // Obsidian 종료 후에도 파일 변경을 감지해 origin/main 에 커밋하는 백그라운드 상주 프로세스.
+    // 같은 기기에 설치되면 heartbeat lease 로 플러그인과 자동 교대(중복 커밋 없음, INSTALL.md §3-4).
+    new Setting(containerEl)
+      .setName('로컬 daemon (백그라운드 커밋)')
+      .setDesc('Obsidian 닫혀 있는 동안에도 vault 파일 변경을 감지해 origin/main 에 반영합니다. off 면 감지·설치 안내를 표시하지 않습니다.')
+      .addToggle((t) =>
+        t.setValue(s.daemonEnabled).onChange(async (v) => {
+          s.daemonEnabled = v;
+          await this.plugin.saveSettings();
+          this.display(); // 감지·설치 UI 즉시 갱신
+        }),
+      );
+
+    if (s.daemonEnabled) {
+      const statusRow = new Setting(containerEl).setName('daemon 상태').setDesc('감지 중…');
+      void detectDaemon().then((st) => this.renderDaemonStatus(statusRow, st));
+    }
+
     new Setting(containerEl).setName('표시 · 협업').setHeading();
 
     new Setting(containerEl)
@@ -257,6 +280,52 @@ export class GitSyncSettingTab extends PluginSettingTab {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * daemon 상태에 따라 statusRow 를 갱신 — 설치됨/미설치/미지원.
+   * 미설치이고 Windows 라면 자동 설치 버튼을 노출(UAC 승인 필요, 원격 install.ps1 다운로드).
+   */
+  private renderDaemonStatus(row: Setting, status: DaemonStatus): void {
+    if (status === 'installed') {
+      row.setDesc('✓ 설치됨 (heartbeat lease 로 플러그인과 자동 교대)');
+      return;
+    }
+    if (status === 'unsupported' || status === 'unknown') {
+      row.setDesc(status === 'unsupported' ? '이 플랫폼에서는 감지·자동 설치 미지원' : '감지 실패 — 수동 확인 필요');
+      return;
+    }
+    // status === 'missing'
+    row.setDesc('✗ 미설치. Obsidian 종료 후에도 커밋을 이어가려면 daemon 설치 권장.');
+    if (process.platform === 'win32') {
+      row.addButton((b) =>
+        b
+          .setButtonText('지금 설치 (관리자 PS)')
+          .setCta()
+          .onClick(async () => {
+            const base = this.plugin.getBasePath();
+            if (!base) {
+              new Notice('vault 경로를 얻지 못했습니다 (데스크톱 전용).');
+              return;
+            }
+            b.setDisabled(true).setButtonText('UAC 대기…');
+            try {
+              await installDaemonWindows(base);
+              new Notice('설치 요청 전송. UAC 승인 창을 확인하세요. 완료 후 이 화면을 새로 열어 상태 재확인.', 8_000);
+            } catch (e) {
+              new Notice('설치 실패: ' + (e instanceof Error ? e.message : String(e)), 8_000);
+            } finally {
+              b.setDisabled(false).setButtonText('지금 설치 (관리자 PS)');
+            }
+          }),
+      );
+    } else {
+      row.addButton((b) =>
+        b.setButtonText('설치 문서 열기').onClick(() => {
+          window.open('https://github.com/aprilslab/gitvault-live/blob/main/INSTALL.md#3-daemon-서버--헤드리스-기기', '_blank');
+        }),
+      );
     }
   }
 }

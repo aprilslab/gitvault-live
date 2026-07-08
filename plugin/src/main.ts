@@ -214,6 +214,25 @@ export default class GitSyncPlugin extends Plugin {
     });
     this.autoSync.start();
     void this.refreshCollab();
+    // daemonEnabled 이면 백그라운드로 daemon 감지 → 없으면 1회 알림(설정 탭에서 설치 가능).
+    // 감지·설치 코드는 tree-shake 로 필요한 시점에만 로드된다(설정 탭이 이미 import 하지만 런타임 실제 실행은 조건부).
+    if (this.settings.daemonEnabled) void this.notifyIfDaemonMissing();
+  }
+
+  /**
+   * daemon 감지 후 미설치·미지원이면 1회 알림. 알림 클릭 시 설정 탭 안내.
+   * 감지 결과는 상태 유지하지 않는다 — 세션마다 한 번 알림, 사용자가 설치하거나 토글 off 로 중단.
+   */
+  private async notifyIfDaemonMissing(): Promise<void> {
+    try {
+      const { detectDaemon } = await import('./sync/DaemonInstall');
+      const status = await detectDaemon();
+      if (status === 'missing') {
+        new Notice('gitvault-live: 로컬 daemon 미설치 — Obsidian 종료 후 커밋이 끊깁니다. 설정에서 [지금 설치] 를 눌러 진행하세요.', 8_000);
+      }
+    } catch {
+      /* 감지 실패는 조용히 삼킴(수동 설치 경로 유지) */
+    }
   }
 
   /** 패널 + 활성 에디터 데코레이션 + "저장 대기 N" 상태바를 함께 갱신 (sync/커밋/저장 시). */
