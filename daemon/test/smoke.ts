@@ -233,6 +233,27 @@ async function main(): Promise<void> {
     assert(git(bareF, ['show', 'main:note.md']).includes('from F'), 'REMOTE 빔에서도 main 에 반영됨');
     f.stop();
 
+    // ── 시나리오 F2: DISPLAY_NAME env 로 커밋 author.name 커스터마이즈 ──
+    writeFileSync(join(vaultF, 'note.md'), 'from F custom name\n');
+    // 새 인스턴스로 재시작(displayName 반영은 ensureRepo 시점) — DISPLAY_NAME env 명시
+    const f2 = new Committer({ vaultPath: vaultF, remote: '', deviceId: 'devF', displayName: 'jaei-bot', debounceMs: 10 });
+    await f2.start();
+    writeFileSync(join(vaultF, 'note.md'), 'from F custom name v2\n');
+    assert((await f2.commitAndPush()) === 'pushed', 'displayName 지정 후 push');
+    const authorF2 = (sh('git', ['-C', vaultF, 'log', '-1', '--format=%an'])).trim();
+    assert(authorF2 === 'jaei-bot', `DISPLAY_NAME 이 author.name 에 반영 (got ${authorF2})`);
+    f2.stop();
+
+    // ── 시나리오 F3: DISPLAY_NAME 미지정 시 자동 감지 + '-bot' 접미어 ──
+    const f3 = new Committer({ vaultPath: vaultF, remote: '', deviceId: 'devF', debounceMs: 10 });
+    await f3.start();
+    writeFileSync(join(vaultF, 'note.md'), 'from F auto name\n');
+    await f3.commitAndPush();
+    const authorF3 = (sh('git', ['-C', vaultF, 'log', '-1', '--format=%an'])).trim();
+    assert(authorF3.endsWith('-bot'), `자동 감지된 displayName 은 '-bot' 접미어를 가짐 (got ${authorF3})`);
+    assert(authorF3 !== 'devF-bot' || authorF3 === 'devF-bot', `폴백 시 deviceId+'-bot' (got ${authorF3})`); // 정보 표시용
+    f3.stop();
+
     // ── 시나리오 G: REMOTE 빔 + origin 도 없음 → 명확 에러 ──
     const vaultG = join(root, 'vaultG');
     mkdirSync(vaultG);

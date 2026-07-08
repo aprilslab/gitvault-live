@@ -2,7 +2,7 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { PromiseQueue } from './queue';
-import { defaultDeviceId, type DaemonConfig } from './config';
+import { defaultDeviceId, defaultDaemonDisplayName, type DaemonConfig } from './config';
 
 const IDENTITY_EMAIL_DOMAIN = 'gitvault-live.local';
 const DEVICE_ID_FILE = 'ogs-device-id'; // .git/ 하위 — 동기화되지 않고 기기 고정
@@ -30,6 +30,11 @@ export class Committer {
   private readonly queue = new PromiseQueue();
 
   private deviceId = '';
+  /**
+   * git author.name — DISPLAY_NAME env 명시값 > defaultDaemonDisplayName(git user.name/homedir/deviceId 폴백) + '-bot' 접미어.
+   * 이메일은 여전히 deviceId 기반(안정적 identity) — displayName 은 오직 표시용.
+   */
+  private displayName = '';
 
   private commitTimer?: NodeJS.Timeout;
   private syncTimer?: NodeJS.Timeout;
@@ -99,8 +104,10 @@ export class Committer {
     if (!isRepo) await this.git.init();
 
     this.resolveDeviceId(); // .git 존재 후 (init 완료) 영속 id 확정
+    // displayName: env 명시값 > git global user.name + '-bot' > homedir 이름 + '-bot' > deviceId + '-bot'
+    this.displayName = this.cfg.displayName?.trim() || defaultDaemonDisplayName(this.deviceId);
 
-    await this.git.addConfig('user.name', this.deviceId);
+    await this.git.addConfig('user.name', this.displayName);
     await this.git.addConfig('user.email', `${this.deviceId}@${IDENTITY_EMAIL_DOMAIN}`);
     // 비-ASCII(한글) 파일명이 status 에서 C-quote 되지 않도록 — 파싱/pathspec 매칭 정확성 필수.
     await this.git.addConfig('core.quotePath', 'false');
