@@ -117,6 +117,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
     containerEl.empty();
     const s = this.plugin.settings;
 
+    new Setting(containerEl).setName('저장소 연결').setHeading();
+
     new Setting(containerEl)
       .setName('저장소 URL')
       .setDesc('HTTPS 주소. 예: https://github.com/owner/vault.git · https://gitlab.example.com/team/vault.git')
@@ -168,6 +170,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl).setName('동기화').setHeading();
+
     new Setting(containerEl)
       .setName('자동 동기화 주기(초)')
       .setDesc('원격 변경을 가져오고 패널을 갱신하는 주기. 최소 3초(낮출수록 git 부하↑).')
@@ -180,6 +184,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
           }
         }),
       );
+
+    new Setting(containerEl).setName('표시 · 협업').setHeading();
 
     new Setting(containerEl)
       .setName('변경 라인 인라인 표시')
@@ -221,6 +227,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
           });
         }
       });
+
+    new Setting(containerEl).setName('기기').setHeading();
 
     new Setting(containerEl)
       .setName('이 기기 ID')
