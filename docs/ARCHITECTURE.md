@@ -1,7 +1,7 @@
 # 아키텍처 (v3)
 
 > 현재 구현 기준. 개요는 [`../README.md`](../README.md), 충돌 정책은 [`CONFLICT-POLICY.md`](CONFLICT-POLICY.md).
-> v3 변경점: 영속 `wip/<device>` → **세션별 ephemeral `wip/<device>/<ts>`**, presence 소스 `origin/main` → **타 참여자 wip 브랜치**, 커밋 identity = **displayName**. 설계 근거: [`superpowers/specs/2026-07-06-ephemeral-wip-presence-design.md`](superpowers/specs/2026-07-06-ephemeral-wip-presence-design.md).
+> v3 변경점: 영속 `wip/<device>` → **세션별 ephemeral `wip/<device>/<ts>`**, presence 소스 `origin/main` → **타 참여자 wip 브랜치**, 커밋 identity = **displayName**.
 
 ## 참여자
 

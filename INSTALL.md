@@ -55,7 +55,7 @@ npm run build
 └── styles.css
 ```
 
-- macOS 예: `~/Personal/wiki/.obsidian/plugins/obsidian-git-sync/`
+- macOS 예: `~/Documents/wiki/.obsidian/plugins/obsidian-git-sync/`
 - Windows 예: `C:\Users\<user>\Documents\wiki\.obsidian\plugins\obsidian-git-sync\`
 - `.obsidian` 폴더가 숨김이면: macOS Finder `Cmd+Shift+.`, Windows 탐색기 "숨긴 항목" 체크.
 

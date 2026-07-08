@@ -16,10 +16,11 @@ Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 
 ## 동기화 모델 (요약)
 
 - `main` — 공식 저장본. 에이전트는 **연속 push 로 직접 전진**, 사용자는 "저장"(squash)으로 전진. non-ff 는 `fetch → union merge → 재시도` 로 해소(force 금지, 서버 훅 없음).
-- `wip/<device>` — 사용자 기기별 상시 작업 브랜치. 단일 작성자 전용, 자기 저장 리셋 시에만 `--force-with-lease`.
+- `wip/<device>/<ts>` — 편집 세션마다 lazy-fork 하는 ephemeral 작업 브랜치. **저장 시 삭제** → 원격 wip 누적 0, `main` 이력은 저장당 1커밋.
 - 충돌 정책 = **union merge** (`*.md merge=union`) — 같은 파일 충돌 시 양쪽 hunk 를 모두 채택. 한계는 [`docs/CONFLICT-POLICY.md`](./docs/CONFLICT-POLICY.md).
 - 저장은 checkout 없이 plumbing(`commit-tree` + `reset --soft`)으로 처리 → 열린 vault 의 워킹트리를 뒤집지 않는다.
-- 협업 표시 = 에디터 **인라인 데코레이션**(CM6) + 보조 diff 패널. 프레즌스는 sync 단위(키입력별 실시간 아님).
+- 협업 표시 = 에디터 **인라인 데코레이션**(CM6, blame 거터 + "작성 중" presence) + 보조 diff 패널. 프레즌스는 sync 단위(키입력별 실시간 아님).
+- **daemon ↔ plugin 공존** — 같은 PC 에 둘 다 두면 `.git/ogs-plugin-alive` heartbeat lease 로 교대: Obsidian 실행 중=플러그인 담당, 종료=daemon 이 파일 변경을 main 에 반영.
 
 ```
                  ┌──────── 호스팅 git repo (SoT, main=공식본) ────────┐
@@ -36,9 +37,9 @@ Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 
 ## 트레이드오프
 
 - **데스크톱 전용** — union merge·squash 는 시스템 git 바이너리에서만 동작 (`isDesktopOnly: true`). 모바일 범위 밖.
-- **토큰 평문 저장** — 플러그인 설정/`.git/config` 에 저장(MVP). 공용 PC 주의.
+- **토큰 평문 저장** — 플러그인 설정/`.git/config` 에 저장. 공용 PC 주의(기기별 최소권한 토큰 권장).
 - **`.obsidian/` 미동기화** — 기기별 상태 + union 불가 json 충돌 회피.
-- **MVP 는 별도 테스트 vault** — 기존 LiveSync `wiki` vault 는 이중 동기화 충돌 회피 위해 건드리지 않는다.
+- **다른 동기화 도구와 병행 불가** — LiveSync·Obsidian Sync·iCloud/OneDrive 실시간 동기화 폴더 위에 얹으면 충돌. 이 시스템 전용 vault 로.
 
 ## 설치
 
@@ -48,3 +49,11 @@ OS 별(macOS/Windows 플러그인, Linux/macOS/Windows daemon) 전체 절차는 
 2. 사용자: 플러그인 설치 → 설정에서 repo URL + 토큰 입력 → [연결 테스트]. 이후 전 과정 자동.
 
 비개발자용 상세 절차는 [`docs/ONBOARDING.md`](./docs/ONBOARDING.md).
+
+## 기여
+
+기여 환영. 빌드·테스트·PR 흐름은 [`CONTRIBUTING.md`](./CONTRIBUTING.md), 설계는 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
+## 라이선스
+
+[MIT](./LICENSE).
