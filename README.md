@@ -64,7 +64,7 @@ iwr -useb https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/ins
 ```bash
 # Linux(systemd)/macOS(launchd). --remote 생략 시 vault 의 기존 git 자격증명 재사용
 curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.sh | \
-  bash -s -- daemon --vault /srv/wiki --remote https://github.com/OWNER/REPO.git --token <PAT>
+  bash -s -- daemon --vault <vault> --remote https://github.com/OWNER/REPO.git --token <PAT>
 ```
 ```powershell
 # Windows(작업 스케줄러)

@@ -2,7 +2,7 @@
 # obsidian-git-sync 설치 (Linux / macOS)
 #
 #   플러그인:  ./install.sh plugin --vault ~/Documents/my-vault
-#   daemon:    ./install.sh daemon --vault /srv/wiki --remote https://github.com/OWNER/REPO.git
+#   daemon:    ./install.sh daemon --vault <vault> --remote https://github.com/OWNER/REPO.git
 #
 # curl 원격 실행(공개 repo):
 #   curl -fsSL https://raw.githubusercontent.com/aprilslab/obsidian-git-sync/main/install.sh | bash -s -- plugin --vault ~/vault

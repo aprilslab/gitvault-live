@@ -84,7 +84,7 @@ npm run build
 공통 환경변수 (`daemon/deploy/daemon.env.example` 참조):
 
 ```bash
-VAULT_PATH=/srv/wiki                                        # 감시할 디렉터리
+VAULT_PATH=<vault>                                          # 감시할 vault 폴더 절대경로
 REMOTE=https://<user>:<token>@github.com/<owner>/<repo>.git  # 토큰 포함 URL
 DEVICE_ID=home-server                                        # 기기마다 유일하게
 DEBOUNCE_MS=3000                                             # (선택) 커밋 디바운스
