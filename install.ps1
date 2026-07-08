@@ -1,7 +1,8 @@
-# gitvault-live 설치 (Windows / PowerShell)
+﻿# gitvault-live 설치 (Windows / PowerShell)
 #
 #   플러그인:  .\install.ps1 plugin -Vault "C:\Users\me\Documents\my-vault"
 #   daemon:    .\install.ps1 daemon -Vault "C:\vault" -Remote "https://github.com/OWNER/REPO.git"
+#              (daemon 은 관리자 PowerShell 필요 — 작업 스케줄러 ONSTART 등록 권한)
 #
 # -Name <이름>  daemon 인스턴스 이름 (기본 vault 폴더명). vault 여러 개면 이걸로 분리
 #               → 작업 gitvault-live-<name>, 배치/로그도 이름별
@@ -26,6 +27,10 @@ function Have($c){ $null -ne (Get-Command $c -ErrorAction SilentlyContinue) }
 function Slug($s){ (($s.ToLower() -replace '[^a-z0-9]+','-').Trim('-')) }
 
 if (-not $Mode)  { Die "사용법: .\install.ps1 [plugin|daemon] -Vault <path> [...]" }
+if ($Mode -eq 'daemon') {
+  $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if (-not $IsAdmin) { Die "daemon 설치는 관리자 PowerShell 필요 (작업 스케줄러 ONSTART 등록 권한). PowerShell 을 '관리자 권한으로 실행'으로 열고 다시 실행" }
+}
 if (-not (Have git))  { Die "git 필요" }
 if (-not (Have node)) { Die "Node 18+ 필요 (node --version). https://nodejs.org 또는 winget install Git.Git / OpenJS.NodeJS.LTS" }
 if (-not (Have npm))  { Die "npm 필요" }
@@ -82,14 +87,17 @@ $NodeExe = (Get-Command node).Source
 $Task = "gitvault-live-$Name"
 $Cmd  = Join-Path $Base "run-daemon-$Name.cmd"
 $Log  = "$Base\daemon-$Name.log"
-@"
+# UTF-8(BOM 없음) + chcp 65001: vault 경로에 한글 있어도 안 깨짐 (ASCII 로 쓰면 한글 소실)
+$CmdBody = @"
 @echo off
+chcp 65001 >nul
 set VAULT_PATH=$Vault
 set REMOTE=$RemoteEff
 set DEVICE_ID=$Device
 set DEBOUNCE_MS=3000
 "$NodeExe" "$Base\daemon.js" >> "$Log" 2>&1
-"@ | Set-Content -Encoding ASCII $Cmd
+"@
+[IO.File]::WriteAllText($Cmd, $CmdBody, (New-Object System.Text.UTF8Encoding($false)))
 
 # 부팅 시 시작 (로그인 계정)
 schtasks /Create /TN "$Task" /SC ONSTART /RU "$env:USERNAME" /TR "$Cmd" /F | Out-Null
