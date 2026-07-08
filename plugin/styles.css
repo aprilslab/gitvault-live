@@ -13,29 +13,66 @@
   color: var(--text-warning);
 }
 
-/* 협업 diff 패널 (Phase C) */
-.ogs-diff-panel {
+/* 파일 이력 패널 */
+.ogs-history-panel {
   padding: 0 8px;
 }
-.ogs-diff-section-title {
+.ogs-history-file {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
-  text-transform: uppercase;
-  margin: 12px 0 4px;
+  margin: 10px 0 8px;
+  word-break: break-all;
 }
-.ogs-diff-file {
-  padding: 4px 6px;
+.ogs-history-row {
+  padding: 6px 8px;
   border-radius: var(--radius-s);
   cursor: pointer;
-  font-size: var(--font-ui-small);
+  border-left: 2px solid var(--background-modifier-border);
+  margin-bottom: 2px;
 }
-.ogs-diff-file:hover {
+.ogs-history-row:hover {
   background: var(--background-modifier-hover);
+  border-left-color: var(--interactive-accent);
 }
-.ogs-diff-empty {
+.ogs-history-subject {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ogs-history-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.ogs-history-empty {
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   padding: 4px 6px;
+}
+
+/* 이력 미리보기 모달 */
+.ogs-history-modal-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.ogs-history-modal-body {
+  max-height: 55vh;
+  overflow: auto;
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  padding: 10px 12px;
+  font-size: var(--font-ui-small);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ogs-history-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 /* 플로팅 저장 버튼 — 미발행 변경 있을 때만 표시 */

@@ -23,6 +23,15 @@ export interface PeerWip {
   author: string; // 마지막 커밋 author.name = 상대 displayName
 }
 
+/** 한 파일의 커밋 이력 항목. 이력 패널용. */
+export interface FileCommit {
+  hash: string; // 전체 SHA (fileAtCommit 조회용)
+  shortHash: string; // 축약 SHA (표시용)
+  author: string;
+  date: string; // 로컬 시각 문자열
+  subject: string; // 커밋 제목
+}
+
 export interface GitManagerOptions {
   /** vault 워킹트리 절대경로 (FileSystemAdapter.getBasePath()). */
   basePath: string;
@@ -192,6 +201,51 @@ export class GitManager {
       return await this.git.raw(['show', `origin/main:${path}`]);
     } catch {
       return null; // origin/main 에 없는 파일(신규 노트 등)
+    }
+  }
+
+  /**
+   * 한 파일의 커밋 이력 (최신순). 저장 이력을 보여주는 ref 우선: 로컬 main → origin/main → HEAD.
+   * (wip 브랜치의 자잘한 자동커밋 노이즈를 피하려 main 을 기준으로 삼는다.)
+   * read-only 라 큐 우회. ref/파일 없으면 빈 배열.
+   */
+  async fileHistory(path: string, limit = 50): Promise<FileCommit[]> {
+    const ref = (await this.refExists('refs/heads/main'))
+      ? 'main'
+      : (await this.refExists('refs/remotes/origin/main'))
+        ? 'origin/main'
+        : 'HEAD';
+    try {
+      // NUL 구분자로 안전 파싱 (제목·이름에 공백/특수문자 있어도 됨).
+      const fmt = '%H%x00%h%x00%an%x00%ad%x00%s';
+      const out = await this.git.raw([
+        'log',
+        `--format=${fmt}`,
+        '--date=format-local:%Y-%m-%d %H:%M',
+        '-n',
+        String(limit),
+        ref,
+        '--',
+        path,
+      ]);
+      return out
+        .split('\n')
+        .filter((l) => l.length > 0)
+        .map((line) => {
+          const [hash, shortHash, author, date, subject = ''] = line.split('\0');
+          return { hash, shortHash, author, date, subject };
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  /** 특정 커밋 시점의 파일 내용 (`git show <hash>:<path>`). 없으면 null. read-only, 큐 우회. */
+  async fileAtCommit(hash: string, path: string): Promise<string | null> {
+    try {
+      return await this.git.raw(['show', `${hash}:${path}`]);
+    } catch {
+      return null; // 그 커밋에 해당 파일 없음(이후 생성/이전 삭제 등)
     }
   }
 

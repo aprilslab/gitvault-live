@@ -10,7 +10,7 @@ export interface AutoSyncOptions {
   debounceMs: number;
   syncSeconds: number;
   onState: (state: SyncState, detail?: string) => void;
-  /** 60s 사이클(fetch)마다 호출 — DiffPanel/데코레이션 갱신(Phase C). */
+  /** 60s 사이클(fetch)마다 호출 — 이력 패널/데코레이션 갱신. */
   onSynced?: () => void;
 }
 

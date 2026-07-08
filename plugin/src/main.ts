@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, FileSystemAdapter, TFile, Notice, Platform, debounce } from 'obsidian';
+import { Plugin, MarkdownView, FileSystemAdapter, Notice, Platform, debounce } from 'obsidian';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import type { EditorView } from '@codemirror/view';
@@ -14,7 +14,7 @@ import { GitManager } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
 import { Heartbeat } from './sync/Heartbeat';
 import { StatusBar } from './ui/StatusBar';
-import { DiffPanel, VIEW_TYPE_OGS_DIFF } from './ui/DiffPanel';
+import { HistoryPanel, VIEW_TYPE_OGS_HISTORY } from './ui/HistoryPanel';
 import { collabDecorations, pushHunks } from './editor/CollabDecorations';
 import { blameGutter, pushBlame } from './editor/BlameGutter';
 import { alignBlame } from './editor/blameLines';
@@ -77,14 +77,11 @@ export default class GitSyncPlugin extends Plugin {
     this.saveBadge.addEventListener('click', () => void this.publishNow());
     this.register(() => this.saveBadge?.remove());
 
-    // 동시 편집 현황 패널.
-    this.registerView(
-      VIEW_TYPE_OGS_DIFF,
-      (leaf) => new DiffPanel(leaf, () => this.git, (path) => this.openPath(path)),
-    );
+    // 파일 이력 패널 (활성 노트의 git 커밋 이력).
+    this.registerView(VIEW_TYPE_OGS_HISTORY, (leaf) => new HistoryPanel(leaf, () => this.git));
 
     this.addRibbonIcon('git-branch', 'Git Sync: 지금 동기화', () => void this.applySettings());
-    this.addRibbonIcon('git-compare', 'Git Sync: 동시 편집 현황', () => void this.activateDiffPanel());
+    this.addRibbonIcon('history', 'Git Sync: 파일 이력', () => void this.activateHistoryPanel());
     this.addRibbonIcon('save', 'Git Sync: 저장(공식본에 반영)', () => void this.publishNow());
     this.addCommand({
       id: 'ogs-sync-now',
@@ -92,9 +89,9 @@ export default class GitSyncPlugin extends Plugin {
       callback: () => void this.applySettings(),
     });
     this.addCommand({
-      id: 'ogs-open-diff-panel',
-      name: '동시 편집 현황 패널 열기',
-      callback: () => void this.activateDiffPanel(),
+      id: 'ogs-open-history-panel',
+      name: '파일 이력 패널 열기',
+      callback: () => void this.activateHistoryPanel(),
     });
     this.addCommand({
       id: 'ogs-save',
@@ -257,9 +254,9 @@ export default class GitSyncPlugin extends Plugin {
   }
 
   private refreshPanels(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_OGS_DIFF)) {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_OGS_HISTORY)) {
       const view = leaf.view;
-      if (view instanceof DiffPanel) void view.refresh();
+      if (view instanceof HistoryPanel) void view.refresh();
     }
   }
 
@@ -357,22 +354,17 @@ export default class GitSyncPlugin extends Plugin {
     }
   }
 
-  private async activateDiffPanel(): Promise<void> {
+  private async activateHistoryPanel(): Promise<void> {
     const { workspace } = this.app;
-    const existing = workspace.getLeavesOfType(VIEW_TYPE_OGS_DIFF)[0];
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_OGS_HISTORY)[0];
     if (existing) {
       workspace.revealLeaf(existing);
       return;
     }
     const leaf = workspace.getRightLeaf(false);
     if (!leaf) return;
-    await leaf.setViewState({ type: VIEW_TYPE_OGS_DIFF, active: true });
+    await leaf.setViewState({ type: VIEW_TYPE_OGS_HISTORY, active: true });
     workspace.revealLeaf(leaf);
-  }
-
-  private openPath(path: string): void {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
   }
 
   /** 확인 모달 없이 바로 발행(squash-to-main). 결과는 단일 토스트(쌓이지 않게 이전 것 교체). */
