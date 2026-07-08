@@ -8,8 +8,8 @@
 - npm workspaces 모노레포: `plugin/`(Obsidian 플러그인) + `daemon/`(헤드리스 git 클라이언트)
 
 ```bash
-git clone https://github.com/<owner>/obsidian-gitvault-live.git
-cd obsidian-gitvault-live
+git clone https://github.com/<owner>/gitvault-live.git
+cd gitvault-live
 npm install
 npm run build          # plugin + daemon 빌드
 ```
