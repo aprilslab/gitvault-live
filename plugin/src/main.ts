@@ -8,6 +8,7 @@ import {
   GitSyncSettingTab,
   generateDeviceId,
   buildAuthedRemote,
+  detectDisplayName,
 } from './settings';
 import { GitManager } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
@@ -181,12 +182,15 @@ export default class GitSyncPlugin extends Plugin {
       }
     };
 
+    // displayName 비었으면 git global user.name → OS 로그인 이름 → 홈 디렉터리 이름 자동 감지.
+    const displayName = this.settings.displayName.trim() || (await detectDisplayName(base));
+
     this.git = new GitManager({
       basePath: base,
       authedRemote,
       bakeCredentials: !!this.settings.token.trim(), // 토큰 입력 시에만 origin URL 덮어씀
       deviceId: this.settings.deviceId,
-      displayName: this.settings.displayName,
+      displayName,
       flushEditors,
       log: (m) => console.error('[obsidian-git-sync]', m),
     });

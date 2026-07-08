@@ -1,7 +1,34 @@
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { simpleGit } from 'simple-git';
-import { hostname } from 'os';
+import { hostname, homedir, userInfo } from 'os';
 import type GitSyncPlugin from './main';
+
+/**
+ * blame·presence 표시이름 자동 감지 (설정의 displayName 이 비었을 때 사용).
+ * 우선순위: git global user.name → OS 로그인 이름 → 홈 디렉터리 이름(/Users/jaei → jaei).
+ * 전부 실패하면 '' (호출부가 deviceId 로 폴백).
+ */
+export async function detectDisplayName(basePath?: string): Promise<string> {
+  try {
+    const name = (await simpleGit(basePath ?? undefined).raw(['config', '--global', 'user.name'])).trim();
+    if (name) return name;
+  } catch {
+    /* git 없음/미설정 — 다음 후보로 */
+  }
+  try {
+    const u = userInfo().username?.trim();
+    if (u) return u;
+  } catch {
+    /* userInfo 불가 */
+  }
+  try {
+    const base = homedir().split(/[/\\]/).filter(Boolean).pop();
+    if (base) return base;
+  } catch {
+    /* homedir 불가 */
+  }
+  return '';
+}
 
 export interface OgsSettings {
   /** 대상 repo URL (토큰 없이 표시용). 예: https://github.com/owner/repo.git */
@@ -178,17 +205,22 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('표시 이름')
-      .setDesc('blame·작성 중 배지에 보일 이름(예: 홍길동). 비우면 기기 ID를 사용합니다.')
-      .addText((t) =>
-        t
-          .setPlaceholder('(비움 = 기기 ID)')
+      .setDesc('blame·작성 중 배지에 보일 이름. 비우면 git user.name → 로그인 이름을 자동 사용합니다.')
+      .addText((t) => {
+        t.setPlaceholder('(자동 감지)')
           .setValue(s.displayName)
           .onChange(async (v) => {
             s.displayName = v.trim();
             await this.plugin.saveSettings();
             await this.plugin.applySettings(); // identity 재설정 반영
-          }),
-      );
+          });
+        // 비어 있으면 자동 감지될 이름을 placeholder 로 미리 보여준다.
+        if (!s.displayName) {
+          void detectDisplayName(this.plugin.getBasePath() ?? undefined).then((name) => {
+            if (name) t.setPlaceholder(`(자동: ${name})`);
+          });
+        }
+      });
 
     new Setting(containerEl)
       .setName('이 기기 ID')
