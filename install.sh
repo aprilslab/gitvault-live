@@ -67,6 +67,8 @@ if [ "$MODE" = "plugin" ]; then
   [ -d "$VAULT/.obsidian" ] || die "vault 에 .obsidian 없음: $VAULT (Obsidian 으로 한 번 연 폴더인지 확인)"
   mkdir -p "$DEST"
   cp plugin/main.js plugin/manifest.json plugin/styles.css "$DEST/"
+  # 번들된 daemon.js 동봉 — 플러그인 설정에서 sudo 없이 로컬 daemon 자동/수동 설치에 사용.
+  [ -f plugin/daemon.js ] && cp plugin/daemon.js "$DEST/"
   echo "✓ 플러그인 설치됨: $DEST"
   echo "  다음: Obsidian → 설정 → 커뮤니티 플러그인 → 제한모드 해제 → gitvault-live 활성화 → repo URL+토큰 입력 → [연결 테스트]"
   exit 0

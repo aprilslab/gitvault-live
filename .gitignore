@@ -3,9 +3,11 @@ dist/
 *.log
 .DS_Store
 
-# plugin build output (esbuild → plugin/main.js)
+# plugin build output (esbuild → plugin/main.js, 번들된 plugin/daemon.js)
 main.js
 plugin/main.js
+daemon.js
+plugin/daemon.js
 *.js.map
 
 # test bundle output (esbuild)
@@ -17,6 +19,7 @@ _blame.cjs
 _multiauthor.cjs
 _peer.cjs
 _peerwip.cjs
+_daemoninstall.cjs
 
 # secrets / local runtime
 .env
