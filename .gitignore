@@ -20,6 +20,7 @@ _multiauthor.cjs
 _peer.cjs
 _peerwip.cjs
 _daemoninstall.cjs
+_gitignore.cjs
 
 # secrets / local runtime
 .env

@@ -474,6 +474,9 @@ export class GitManager {
     await this.git.raw(['checkout-index', '-a']).catch(() => undefined);
     // 원격 파일 실체화 '이후' seed: 원격이 가진 .gitattributes 는 존중되고, .gitignore 는 아래 add 전에 놓인다.
     this.seedRepoFiles();
+    // 이미 추적 중인 .obsidian 은 .gitignore 만으론 계속 동기화된다 — 인덱스에서 제거(디스크 파일은 유지).
+    // data.json(기기별 deviceId·토큰)이 팀원 것과 서로 덮어쓰는 사고를 자가 치유. 미추적이면 --ignore-unmatch 로 no-op.
+    await this.git.raw(['rm', '-r', '--cached', '--ignore-unmatch', '--', '.obsidian']).catch(() => undefined);
     // 로컬 신규/수정만 stage(삭제는 무시) → dirty 는 이제 base(oldMain) 기준.
     // [알려진 한계] 미저장 로컬 파일 '삭제' 는 재연결 시 보존되지 않는다 — 의도적: 대량 삭제가
     // origin/main 으로 전파돼 팀원 파일을 지우는 것을 막기 위함(수정/신규만 adopt).
@@ -519,7 +522,9 @@ export class GitManager {
   /** seed 파일 보장: .gitattributes(union) + .gitignore. 기존 파일은 존중(wx). 모든 연결 경로에서 호출. */
   private seedRepoFiles(): void {
     writeIfAbsent(this.opts.basePath, '.gitattributes', '*.md merge=union\n* text=auto eol=lf\n');
-    writeIfAbsent(this.opts.basePath, '.gitignore', '.obsidian/\n.DS_Store\nThumbs.db\n');
+    // .gitignore 는 존중하되 .obsidian/ 규칙은 반드시 보장 — 기존 .gitignore 가 있어도 누락 시 append.
+    // (data.json 이 추적되면 팀원끼리 deviceId·설정을 서로 덮어쓴다.)
+    ensureGitignoreRules(this.opts.basePath, ['.obsidian/', '.DS_Store', 'Thumbs.db']);
   }
 
   /**
@@ -708,4 +713,33 @@ function writeIfAbsent(base: string, name: string, content: string): void {
   } catch {
     /* 이미 있으면 존중 */
   }
+}
+
+/**
+ * .gitignore 에 필수 무시 규칙을 보장한다 — 파일이 없으면 생성, 있으면 **누락 규칙만 append**(기존 규칙 보존).
+ * 규칙 비교는 주석·공백 제외 라인 단위, trailing slash 무시(`.obsidian` == `.obsidian/`).
+ * [중요] .obsidian/ 가 빠지면 plugin data.json(기기별 deviceId·토큰)이 동기화돼 팀원끼리 서로 덮어쓴다.
+ * 반환: 파일을 실제로 바꿨으면 true.
+ */
+export function ensureGitignoreRules(base: string, rules: string[]): boolean {
+  const path = join(base, '.gitignore');
+  let existing = '';
+  try {
+    existing = readFileSync(path, 'utf8');
+  } catch {
+    /* 파일 없음 → 새로 생성 */
+  }
+  const norm = (l: string): string => l.trim().replace(/\/+$/, '');
+  const have = new Set(
+    existing
+      .split(/\r?\n/)
+      .map(norm)
+      .filter((l) => l && !l.startsWith('#')),
+  );
+  const missing = rules.filter((r) => !have.has(norm(r)));
+  if (missing.length === 0) return false;
+  const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+  const header = existing ? '\n# gitvault-live — 기기별 상태·플러그인 설정 미동기화 (자동 추가)\n' : '';
+  writeFileSync(path, existing + prefix + header + missing.join('\n') + '\n');
+  return true;
 }
