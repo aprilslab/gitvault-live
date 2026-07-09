@@ -39,7 +39,7 @@ Obsidian vault 를 **git 기반으로 동기화**하는 시스템. 자동으로 
 ## 트레이드오프
 
 - **데스크톱 전용** — union merge·squash 는 시스템 git 바이너리에서만 동작 (`isDesktopOnly: true`). 모바일 범위 밖.
-- **토큰 평문 저장** — 플러그인 설정/`.git/config` 에 저장. 공용 PC 주의(기기별 최소권한 토큰 권장).
+- **토큰 평문 저장** — 토큰을 쓸 때(주로 헤드리스 서버) 플러그인 설정/`.git/config`/credential store 에 평문 저장된다. 데스크톱은 credential helper 재사용으로 토큰 없이 쓸 수 있다([인증](#인증--토큰이-언제-필요한가) 참고). 토큰 사용 시 기기별 최소권한 PAT 권장.
 - **`.obsidian/` 미동기화** — 기기별 상태 + union 불가 json 충돌 회피.
 - **다른 동기화 도구와 병행 불가** — LiveSync·Obsidian Sync·iCloud/OneDrive 실시간 동기화 폴더 위에 얹으면 충돌. 이 시스템 전용 vault 로.
 
@@ -80,6 +80,17 @@ daemon 서비스는 **vault 이름별 인스턴스**로 등록된다(기본 = va
 curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → gitvault-live@wiki
 curl -fsSL .../install.sh | bash -s -- daemon --vault ~/notes --name notes  # → gitvault-live@notes
 ```
+
+### 인증 — 토큰이 언제 필요한가
+
+git push/pull 은 자격증명이 필요하다. **누가·어디서 돌리느냐**로 갈린다.
+
+| 시나리오 | 토큰 |
+|----------|------|
+| **데스크톱**: 이미 자격증명으로 인증된 환경에서 vault 를 clone 하고 그 위에 plugin(+같은 PC daemon) 설치 | **불필요.** clone 시 저장된 자격증명(macOS osxkeychain·Windows Credential Manager 등 credential helper, 또는 SSH 키)을 plugin·daemon 이 그대로 재사용. plugin 설정의 토큰 필드는 **비워 둔다**. |
+| **헤드리스 서버**: daemon 을 상주 서비스로 | **필수.** 대화형 자격증명 저장소가 없으므로 스스로 인증 불가 → `--token <PAT>`(또는 REMOTE URL 에 토큰 포함)로 자격증명을 심어 줘야 한다. |
+
+> 헤드리스에서 토큰을 피하는 유일한 방법은 **대상 repo 의 write deploy key(SSH)를 미리 구성**하고 origin 을 `git@…` SSH URL 로 두는 것. 그 경우에만 토큰 없이 동작한다. deploy key 는 repo 1개에 종속되며 같은 키를 다른 repo 에 재사용할 수 없다.
 
 ### 수동 설치
 
