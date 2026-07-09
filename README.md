@@ -64,7 +64,9 @@ iwr -useb https://raw.githubusercontent.com/aprilslab/gitvault-live/main/install
 .\install.ps1 plugin -Vault "C:\path\to\vault"
 ```
 
-**daemon (서버)** — 파일 변경을 감시해 main 에 자동 반영. 상주 서비스로 등록:
+> **데스크톱은 daemon 을 따로 깔 필요 없다.** 플러그인을 켜고 저장소가 설정되면, 플러그인이 번들된 daemon 을 **사용자 권한으로 자동 설치**한다(sudo·별도 명령 불필요 — macOS launchd / Linux systemd --user). 설정의 **"로컬 daemon"** 토글로 설치/제거를 켜고 끈다. 아래 수동 명령은 **헤드리스 서버**(또는 수동 설치)용이다.
+
+**daemon (헤드리스 서버)** — 파일 변경을 감시해 main 에 자동 반영. 상주 서비스로 등록:
 ```bash
 # Linux(systemd)/macOS(launchd). --remote 생략 시 vault 의 기존 git 자격증명 재사용
 curl -fsSL https://raw.githubusercontent.com/aprilslab/gitvault-live/main/install.sh | \
