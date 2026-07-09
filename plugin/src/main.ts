@@ -130,8 +130,10 @@ export default class GitSyncPlugin extends Plugin {
     // 타이핑(엔터 포함)에 즉시 반응 — 버퍼 기준 인메모리 diff 라 디스크 저장을 기다리지 않는다.
     this.registerEvent(this.app.workspace.on('editor-change', () => this.decoDebounce()));
 
-    // 시작 커밋 폭주 방지: 레이아웃 준비 후에 감시 시작.
-    this.app.workspace.onLayoutReady(() => void this.applySettings());
+    // 시작 커밋 폭주 방지: 레이아웃 준비 후에 감시 시작. 이후 daemon 설치상태를 1회 조정.
+    this.app.workspace.onLayoutReady(() => {
+      void this.applySettings().then(() => this.reconcileDaemonOnce());
+    });
   }
 
   onunload(): void {
@@ -214,24 +216,111 @@ export default class GitSyncPlugin extends Plugin {
     });
     this.autoSync.start();
     void this.refreshCollab();
-    // daemonEnabled 이면 백그라운드로 daemon 감지 → 없으면 1회 알림(설정 탭에서 설치 가능).
-    // 감지·설치 코드는 tree-shake 로 필요한 시점에만 로드된다(설정 탭이 이미 import 하지만 런타임 실제 실행은 조건부).
-    if (this.settings.daemonEnabled) void this.notifyIfDaemonMissing();
+  }
+
+  /** daemon 설치·push 가 가능한 remote 가 갖춰졌는지 — repo URL 입력됐거나 vault 가 이미 git repo(origin 보유). */
+  isRemoteConfigured(): boolean {
+    const base = this.getBasePath();
+    if (!base) return false;
+    return !!buildAuthedRemote(this.settings) || existsSync(join(base, '.git'));
+  }
+
+  /** 플러그인에 번들된 daemon.js 절대경로 (설치 시 사용자 위치로 복사). */
+  private daemonSrcPath(base: string): string {
+    const dir = this.manifest.dir ?? join('.obsidian', 'plugins', this.manifest.id);
+    return join(base, dir, 'daemon.js');
   }
 
   /**
-   * daemon 감지 후 미설치·미지원이면 1회 알림. 알림 클릭 시 설정 탭 안내.
-   * 감지 결과는 상태 유지하지 않는다 — 세션마다 한 번 알림, 사용자가 설치하거나 토글 off 로 중단.
+   * 로컬 daemon 설치 시도. remote 미설정이면 설치하지 않고 false.
+   * 성공 시 daemonEnabled=true, 실패 시 false 로 내려 매 로드마다 재시도하지 않는다.
    */
-  private async notifyIfDaemonMissing(): Promise<void> {
+  async enableDaemon(): Promise<boolean> {
+    const base = this.getBasePath();
+    if (!base) {
+      new Notice('daemon: vault 경로를 얻지 못했습니다(데스크톱 전용).');
+      return false;
+    }
+    if (!this.isRemoteConfigured()) {
+      new Notice('daemon 설치 전에 저장소 URL(또는 기존 origin)을 먼저 설정하세요.', 8_000);
+      return false;
+    }
+    try {
+      const { installDaemon } = await import('./sync/DaemonInstall');
+      // 토큰은 넘기지 않는다 — 데스크톱은 기기 git 자격증명(osxkeychain 등) 재사용. vault 에 origin 있으면 remote 생략.
+      const vaultIsRepo = existsSync(join(base, '.git'));
+      const remote = vaultIsRepo ? undefined : this.settings.repoUrl.trim() || undefined;
+      await installDaemon({
+        vaultPath: base,
+        daemonSrc: this.daemonSrcPath(base),
+        deviceId: this.settings.deviceId,
+        remote,
+      });
+      this.settings.daemonEnabled = true;
+      await this.saveSettings();
+      new Notice('✓ 로컬 daemon 설치됨 — Obsidian 종료 후에도 변경을 origin/main 에 반영합니다.', 6_000);
+      return true;
+    } catch (e) {
+      this.settings.daemonEnabled = false;
+      await this.saveSettings();
+      new Notice('daemon 설치 실패: ' + (e instanceof Error ? e.message.split('\n')[0] : String(e)), 10_000);
+      return false;
+    }
+  }
+
+  /** 로컬 daemon 중지·제거 + 토글 off 저장. */
+  async disableDaemon(): Promise<void> {
+    this.settings.daemonEnabled = false;
+    await this.saveSettings();
+    const base = this.getBasePath();
+    if (!base) return;
+    try {
+      const { uninstallDaemon } = await import('./sync/DaemonInstall');
+      await uninstallDaemon(base);
+      new Notice('로컬 daemon 을 중지·제거했습니다.');
+    } catch (e) {
+      new Notice('daemon 제거 실패(수동 확인 필요): ' + (e instanceof Error ? e.message.split('\n')[0] : String(e)), 8_000);
+    }
+  }
+
+  /** 세션당 1회만 실행되는 daemon 상태 조정 가드. */
+  private daemonReconciled = false;
+
+  private reconcileDaemonOnce(): void {
+    if (this.daemonReconciled) return;
+    this.daemonReconciled = true;
+    void this.reconcileDaemon();
+  }
+
+  /**
+   * 토글(daemonEnabled)과 실제 설치상태를 일치시킨다.
+   * - 설치돼 있으면 토글 on 으로 맞춤.
+   * - 미설치 + 토글 on + remote 설정됨 → 기본 동작으로 설치(무음). 실패하면 enableDaemon 이 off 로 내림.
+   * - 미설치 + 토글 on + remote 미설정 → 설치 불가 → off.
+   * - 미설치 + 토글 off → 사용자가 끈 것, 아무것도 안 함.
+   */
+  private async reconcileDaemon(): Promise<void> {
     try {
       const { detectDaemon } = await import('./sync/DaemonInstall');
-      const status = await detectDaemon();
-      if (status === 'missing') {
-        new Notice('gitvault-live: 로컬 daemon 미설치 — Obsidian 종료 후 커밋이 끊깁니다. 설정에서 [지금 설치] 를 눌러 진행하세요.', 8_000);
+      const status = await detectDaemon(this.getBasePath() ?? undefined);
+      if (status === 'unsupported' || status === 'unknown') return;
+      if (status === 'installed') {
+        if (!this.settings.daemonEnabled) {
+          this.settings.daemonEnabled = true;
+          await this.saveSettings();
+        }
+        return;
+      }
+      // status === 'missing'
+      if (!this.settings.daemonEnabled) return;
+      if (this.isRemoteConfigured()) {
+        await this.enableDaemon();
+      } else {
+        this.settings.daemonEnabled = false;
+        await this.saveSettings();
       }
     } catch {
-      /* 감지 실패는 조용히 삼킴(수동 설치 경로 유지) */
+      /* 감지 실패는 조용히 무시 — 수동 설치 경로 유지 */
     }
   }
 

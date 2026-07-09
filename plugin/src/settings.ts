@@ -2,7 +2,7 @@ import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { simpleGit } from 'simple-git';
 import { hostname, homedir, userInfo } from 'os';
 import type GitSyncPlugin from './main';
-import { detectDaemon, installDaemonWindows, type DaemonStatus } from './sync/DaemonInstall';
+import { detectDaemon, type DaemonStatus } from './sync/DaemonInstall';
 
 /**
  * blame·presence 표시이름 자동 감지 (설정의 displayName 이 비었을 때 사용).
@@ -194,18 +194,27 @@ export class GitSyncSettingTab extends PluginSettingTab {
     // 같은 기기에 설치되면 heartbeat lease 로 플러그인과 자동 교대(중복 커밋 없음, INSTALL.md §3-4).
     new Setting(containerEl)
       .setName('로컬 daemon (백그라운드 커밋)')
-      .setDesc('Obsidian 닫혀 있는 동안에도 vault 파일 변경을 감지해 origin/main 에 반영합니다. off 면 감지·설치 안내를 표시하지 않습니다.')
+      .setDesc('Obsidian 닫혀 있는 동안에도 vault 파일 변경을 감지해 origin/main 에 반영합니다. 켜면 설치, 끄면 제거합니다.')
       .addToggle((t) =>
         t.setValue(s.daemonEnabled).onChange(async (v) => {
-          s.daemonEnabled = v;
-          await this.plugin.saveSettings();
-          this.display(); // 감지·설치 UI 즉시 갱신
+          // 토글은 실제 설치상태를 반영한다 — 켜기=설치(remote 필요), 끄기=제거.
+          if (v) {
+            const ok = await this.plugin.enableDaemon();
+            if (!ok) t.setValue(false); // 설치 못 하면 시각적으로 off 로 되돌림
+          } else {
+            await this.plugin.disableDaemon();
+          }
+          this.display(); // 상태·설치 UI 즉시 갱신
         }),
       );
 
     if (s.daemonEnabled) {
       const statusRow = new Setting(containerEl).setName('daemon 상태').setDesc('감지 중…');
-      void detectDaemon().then((st) => this.renderDaemonStatus(statusRow, st));
+      const base = this.plugin.getBasePath() ?? undefined;
+      const refresh = (): void => void detectDaemon(base).then((st) => this.renderDaemonStatus(statusRow, st));
+      refresh();
+      // 로드 직후 자동 설치가 방금 끝났을 수 있어 한 번 더 확인 — 초기 감지가 설치 이전이면 stale 이 남는다.
+      window.setTimeout(refresh, 2500);
     }
 
     new Setting(containerEl).setName('표시 · 협업').setHeading();
@@ -285,9 +294,11 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
   /**
    * daemon 상태에 따라 statusRow 를 갱신 — 설치됨/미설치/미지원.
-   * 미설치이고 Windows 라면 자동 설치 버튼을 노출(UAC 승인 필요, 원격 install.ps1 다운로드).
+   * 미설치면 [지금 설치] 버튼을 노출(플러그인 번들 daemon.js 로 사용자 권한 설치, sudo 불필요).
    */
   private renderDaemonStatus(row: Setting, status: DaemonStatus): void {
+    row.clear(); // 재감지로 여러 번 호출됨 — 이전 버튼/설명 제거 후 다시 그린다(멱등).
+    row.setName('daemon 상태');
     if (status === 'installed') {
       row.setDesc('✓ 설치됨 (heartbeat lease 로 플러그인과 자동 교대)');
       return;
@@ -297,35 +308,17 @@ export class GitSyncSettingTab extends PluginSettingTab {
       return;
     }
     // status === 'missing'
-    row.setDesc('✗ 미설치. Obsidian 종료 후에도 커밋을 이어가려면 daemon 설치 권장.');
-    if (process.platform === 'win32') {
-      row.addButton((b) =>
-        b
-          .setButtonText('지금 설치 (관리자 PS)')
-          .setCta()
-          .onClick(async () => {
-            const base = this.plugin.getBasePath();
-            if (!base) {
-              new Notice('vault 경로를 얻지 못했습니다 (데스크톱 전용).');
-              return;
-            }
-            b.setDisabled(true).setButtonText('UAC 대기…');
-            try {
-              await installDaemonWindows(base);
-              new Notice('설치 요청 전송. UAC 승인 창을 확인하세요. 완료 후 이 화면을 새로 열어 상태 재확인.', 8_000);
-            } catch (e) {
-              new Notice('설치 실패: ' + (e instanceof Error ? e.message : String(e)), 8_000);
-            } finally {
-              b.setDisabled(false).setButtonText('지금 설치 (관리자 PS)');
-            }
-          }),
-      );
-    } else {
-      row.addButton((b) =>
-        b.setButtonText('설치 문서 열기').onClick(() => {
-          window.open('https://github.com/aprilslab/gitvault-live/blob/main/INSTALL.md#3-daemon-서버--헤드리스-기기', '_blank');
+    row.setDesc('✗ 미설치. Obsidian 종료 후에도 커밋을 이어가려면 daemon 을 설치하세요.');
+    row.addButton((b) =>
+      b
+        .setButtonText('지금 설치')
+        .setCta()
+        .onClick(async () => {
+          b.setDisabled(true).setButtonText('설치 중…');
+          await this.plugin.enableDaemon(); // remote 없으면 내부에서 안내 후 무동작
+          b.setDisabled(false).setButtonText('지금 설치');
+          this.display(); // 상태 재감지
         }),
-      );
-    }
+    );
   }
 }
