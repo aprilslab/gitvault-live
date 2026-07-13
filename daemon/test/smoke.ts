@@ -193,9 +193,9 @@ async function main(): Promise<void> {
       'heartbeat 신선 → 변경분이 main 에 안 올라감',
     );
 
-    // E-2: heartbeat 낡음 → daemon 인수 (변경분 main 반영)
-    writeFileSync(beat, `${Date.now() - 60_000}\n`); // 60s 전 = stale(>30s)
-    assert((await e.commitAndPush()) === 'pushed', 'heartbeat 낡음 → daemon 인수(pushed)');
+    // E-2: heartbeat 가 grace(90s) 넘게 낡음 → 크래시로 방치된 것으로 보고 daemon 인수
+    writeFileSync(beat, `${Date.now() - 120_000}\n`); // 120s 전 = grace 초과
+    assert((await e.commitAndPush()) === 'pushed', 'heartbeat grace 초과 → daemon 인수(pushed)');
     assert(
       git(bareE, ['show', 'main:doc.md']).includes('plugin-owns-this'),
       'heartbeat 낡음 → 변경분이 main 에 반영됨',
@@ -309,6 +309,35 @@ async function main(): Promise<void> {
       'H: 로컬 data.json 이 팀원(OTHER-PERSON) 것으로 안 덮임',
     );
     h.stop();
+
+    // ── 시나리오 I: takeover 히스테리시스 — 일시 stale(<grace) 엔 후퇴, grace 초과에만 인수 ──
+    // (플러그인이 자기 git op 로 heartbeat 을 잠깐 놓쳐도 데몬이 HEAD 를 뺏지 않아 churn 방지)
+    const bareI = join(root, 'vaultI.git');
+    initBare(bareI);
+    seedRemote(bareI, root, { 'doc.md': 'seed\n' });
+    const vaultI = join(root, 'vaultI');
+    mkdirSync(vaultI);
+    const beatI = join(vaultI, '.git', HEARTBEAT_FILE);
+    const iC = new Committer({ vaultPath: vaultI, remote: bareI, deviceId: 'devI', debounceMs: 10 });
+    await iC.start();
+
+    // heartbeat 40s 낡음: 30s 임계는 넘지만 90s grace 안 → 데몬 후퇴(플러그인 바쁨으로 간주)
+    writeFileSync(beatI, `${Date.now() - 40_000}\n`);
+    writeFileSync(join(vaultI, 'doc.md'), 'plugin-busy-edit\n');
+    assert((await iC.commitAndPush()) === 'nochange', '40s stale(<grace) → 데몬 후퇴(히스테리시스)');
+    assert(
+      !git(bareI, ['show', 'main:doc.md']).includes('plugin-busy-edit'),
+      '40s stale → 변경이 main 에 안 올라감',
+    );
+
+    // heartbeat 100s 낡음: grace(90s) 초과 → 진짜 종료로 보고 데몬 인수
+    writeFileSync(beatI, `${Date.now() - 100_000}\n`);
+    assert((await iC.commitAndPush()) === 'pushed', '100s stale(>grace) → 데몬 인수');
+    assert(
+      git(bareI, ['show', 'main:doc.md']).includes('plugin-busy-edit'),
+      '100s stale → 변경이 main 에 반영',
+    );
+    iC.stop();
 
     console.log('SMOKE OK');
   } finally {
