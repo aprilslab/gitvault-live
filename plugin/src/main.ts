@@ -358,7 +358,9 @@ export default class GitSyncPlugin extends Plugin {
     if (files.length > 0) {
       const key = Platform.isMacOS ? '⌘⇧S' : 'Ctrl+Shift+S';
       badge.setText(`● ${files.length}개 저장 안 됨 — 저장 (${key})`);
-      badge.setAttr('title', `클릭하면 저장\n${outgoingSummary(files)}`);
+      // Obsidian 툴팁(aria-label) 사용 — 네이티브 title 은 Electron 에서 안 뜨거나 지연. 상태바와 동일 방식.
+      badge.setAttr('aria-label', `클릭하면 저장\n${outgoingSummary(files)}`);
+      badge.setAttr('aria-label-position', 'top'); // 하단 고정 배지 위로 표시
       badge.show();
     } else {
       badge.hide();

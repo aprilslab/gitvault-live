@@ -10,17 +10,8 @@ daemon.js
 plugin/daemon.js
 *.js.map
 
-# test bundle output (esbuild)
-_bundle.cjs
-_linediff.cjs
-_git.cjs
-_relative.cjs
-_blame.cjs
-_multiauthor.cjs
-_peer.cjs
-_peerwip.cjs
-_daemoninstall.cjs
-_gitignore.cjs
+# test bundle output (esbuild) — glob 으로 신규 테스트도 자동 커버(개별 나열 시 누락 drift)
+_*.cjs
 
 # secrets / local runtime
 .env

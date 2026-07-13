@@ -18,7 +18,8 @@
     "test:peerwip": "esbuild test/peerWipPresence.test.ts --bundle --platform=node --format=cjs --outfile=test/_peerwip.cjs && node test/_peerwip.cjs",
     "test:daemoninstall": "esbuild test/daemonInstall.test.ts --bundle --platform=node --format=cjs --outfile=test/_daemoninstall.cjs && node test/_daemoninstall.cjs",
     "test:gitignore": "esbuild test/gitignoreRules.test.ts --bundle --platform=node --format=cjs --outfile=test/_gitignore.cjs && node test/_gitignore.cjs",
-    "test": "npm run test:hunks && npm run test:linediff && npm run test:relative && npm run test:blame && npm run test:peer && npm run test:git && npm run test:multiauthor && npm run test:peerwip && npm run test:daemoninstall && npm run test:gitignore"
+    "test:status": "esbuild test/statusBar.test.ts --bundle --platform=node --format=cjs --outfile=test/_status.cjs && node test/_status.cjs",
+    "test": "npm run test:hunks && npm run test:linediff && npm run test:relative && npm run test:blame && npm run test:peer && npm run test:git && npm run test:multiauthor && npm run test:peerwip && npm run test:daemoninstall && npm run test:gitignore && npm run test:status"
   },
   "dependencies": {
     "simple-git": "^3.27.0"
