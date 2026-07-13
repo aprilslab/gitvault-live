@@ -106,38 +106,22 @@ export class GitManager {
 
   /** repo 보장: init/clone, identity·quotePath 설정, remote 갱신, main 정렬(adopt/seed) + 자기 wip 정리. */
   ensureRepo(): Promise<void> {
-    return this.queue.add(async () => {
-      try {
-        await this.ensureRepoLocked();
-      } catch (e) {
-        // 네트워크/오프라인은 일시적 — 복구(파괴적) 대상 아님. 그대로 전파해 다음 사이클 재시도.
-        if (isNetworkError(e)) throw e;
-        // 경합/깨진 상태 추정 — 무손실 복구로 깨끗한 wip 확보. 복구도 실패하면 진짜 오류로 전파.
-        this.log(`ensureRepo 실패 → 복구 시도: ${redact(e)}`);
-        await this.recoverToCleanWip();
-      }
-    });
+    return this.queue.add(() => this.ensureRepoLocked());
   }
 
-  /** 세션 wip(`wip/<device>/<ts>`, ensureRepo·finishToMain 에서 eager fork)로 커밋·푸시 (직렬화). */
+  /** 세션 wip(`wip/<device>/<ts>`, ensureRepo·finishToMain 에서 eager fork)로 커밋·푸시 (직렬화).
+   * 실패는 그대로 전파 — 표시 계층(AutoSync/main)이 네트워크는 '오프라인', 그 외는 '오류'로 구분한다.
+   * [주의] 여기서 자동 recoverToCleanWip 를 돌리지 않는다: 복구의 파일 쓰기(stash pop 등)가 vault
+   * 이벤트를 유발 → 재커밋 → 데몬과 경합 → 재실패의 **피드백 루프**를 만든 회귀가 있었다. 복구는 수동
+   * (recoverSession / '기기 ID 재설정')로만. 데몬 churn 자체는 데몬쪽 heartbeat 히스테리시스가 막는다. */
   commitAndPushWip(): Promise<'pushed' | 'nochange'> {
-    return this.queue.add(async () => {
-      try {
-        return await this.commitAndPushWipOnce();
-      } catch (e) {
-        // 네트워크/오프라인은 일시적 — 복구 안 하고 전파(다음 사이클 재시도). push 실패 등이 stash/reset 유발 금지.
-        if (isNetworkError(e)) throw e;
-        // 경합(daemon 동시 op)로 checkout/commit 이 깨진 경우 — 무손실 복구 후 1회 재시도.
-        this.log(`commitAndPushWip 실패 → 복구 후 재시도: ${redact(e)}`);
-        await this.recoverToCleanWip();
-        return await this.commitAndPushWipOnce();
-      }
-    });
+    return this.queue.add(() => this.commitAndPushWipOnce());
   }
 
-  /** 수동/폴백 세션 복구 — 깨진 브랜치·인덱스·mid-merge 상태를 무손실로 정리하고 깨끗한 wip 확보(직렬화). */
+  /** 수동 세션 복구 — 깨진 브랜치·인덱스·mid-merge 상태를 무손실로 정리하고 깨끗한 wip 확보(직렬화).
+   * suppressed 로 감싸 복구 중의 워킹트리 쓰기가 vault 이벤트→재커밋 루프를 일으키지 않게 한다. */
   recoverSession(): Promise<void> {
-    return this.queue.add(() => this.recoverToCleanWip());
+    return this.queue.add(() => this.suppressed(() => this.recoverToCleanWip()));
   }
 
   private async commitAndPushWipOnce(): Promise<'pushed' | 'nochange'> {
