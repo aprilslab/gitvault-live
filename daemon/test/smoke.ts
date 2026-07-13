@@ -267,6 +267,49 @@ async function main(): Promise<void> {
     g.stop();
     assert(threw instanceof Error && threw.message.includes('REMOTE'), `REMOTE 빔 + origin 없음 → 명확 에러 (got ${threw instanceof Error ? threw.message : threw})`);
 
+    // ── 시나리오 H: .obsidian/data.json 유출 자가 치유 (tx-docs 회귀) ──
+    // 원격이 이미 .obsidian/**/data.json 을 추적 + .gitignore 에 .obsidian 없음(관리자가 실수로 커밋).
+    // daemon 은 (1) .gitignore 에 .obsidian/ append (2) 인덱스에서 .obsidian untrack → 팀원끼리
+    // deviceId·토큰 덮어쓰기 사고를 종식해야 한다. 디스크의 로컬 data.json 은 보존(원격 것으로 미덮어씀).
+    const bareH = join(root, 'vaultH.git');
+    initBare(bareH);
+    const seedH = join(root, 'seedH');
+    sh('git', ['clone', '-q', bareH, seedH]);
+    sh('git', ['-C', seedH, 'config', 'user.email', 't@t']);
+    sh('git', ['-C', seedH, 'config', 'user.name', 't']);
+    writeFileSync(join(seedH, '.gitattributes'), '*.md merge=union\n* text=auto eol=lf\n');
+    writeFileSync(join(seedH, '.gitignore'), 'node_modules/\n'); // 기존 .gitignore 존재, .obsidian 없음
+    const dataRel = join('.obsidian', 'plugins', 'gitvault-live', 'data.json');
+    mkdirSync(join(seedH, '.obsidian', 'plugins', 'gitvault-live'), { recursive: true });
+    writeFileSync(join(seedH, dataRel), '{"deviceId":"OTHER-PERSON"}\n'); // 팀원 설정 — 추적된 채 push
+    writeFileSync(join(seedH, 'note.md'), 'shared note\n');
+    sh('git', ['-C', seedH, 'add', '-A']);
+    sh('git', ['-C', seedH, 'commit', '-qm', 'seed-with-tracked-obsidian']);
+    sh('git', ['-C', seedH, 'push', '-q', 'origin', 'main']);
+    // 사전 조건: 원격이 실제로 data.json 을 추적 중
+    assert(
+      git(bareH, ['ls-tree', '-r', '--name-only', 'main']).includes('data.json'),
+      'H 사전조건: 원격이 .obsidian/data.json 추적 중',
+    );
+
+    const vaultH = join(root, 'vaultH');
+    mkdirSync(join(vaultH, '.obsidian', 'plugins', 'gitvault-live'), { recursive: true });
+    writeFileSync(join(vaultH, dataRel), '{"deviceId":"ME"}\n'); // 이 기기의 로컬 설정 — 덮이면 안 됨
+    const h = new Committer({ vaultPath: vaultH, remote: bareH, deviceId: 'devH', debounceMs: 10 });
+    await h.start(); // adopt → seed(.gitignore append) → untrack → initial push
+    await h.commitAndPush(); // untrack 제거를 확실히 main 에 반영
+
+    const treeH = git(bareH, ['ls-tree', '-r', '--name-only', 'main']);
+    assert(!treeH.includes('data.json'), `H: .obsidian/data.json 이 main 에서 제거됨 (${JSON.stringify(treeH)})`);
+    assert(treeH.includes('note.md'), 'H: 일반 노트는 추적 유지');
+    assert(git(bareH, ['show', 'main:.gitignore']).includes('.obsidian'), 'H: main:.gitignore 에 .obsidian 규칙 추가됨');
+    assert(existsSync(join(vaultH, dataRel)), 'H: 로컬 data.json 디스크 파일 보존(untrack 은 인덱스만)');
+    assert(
+      sh('cat', [join(vaultH, dataRel)]).includes('ME'),
+      'H: 로컬 data.json 이 팀원(OTHER-PERSON) 것으로 안 덮임',
+    );
+    h.stop();
+
     console.log('SMOKE OK');
   } finally {
     rmSync(root, { recursive: true, force: true });

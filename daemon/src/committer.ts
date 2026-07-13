@@ -129,6 +129,10 @@ export class Committer {
     // 모든 경로(adopt/기존 main/빈 원격 seed)에서 union 드라이버 보장 — 없으면 .md 충돌이
     // -X theirs(원격 승)로 떨어져 로컬 편집이 조용히 소실된다. wx 라 기존 파일은 존중.
     this.seedRepoFiles();
+    // 이미 추적 중인 .obsidian(원격에서 상속됐거나 과거 커밋됨)은 .gitignore 만으론 계속 동기화된다 —
+    // 인덱스에서 제거(디스크 파일은 유지). data.json(기기별 deviceId·토큰)이 팀원 것과 서로 덮어쓰는
+    // 사고를 자가 치유. 미추적이면 --ignore-unmatch 로 no-op. 다음 flushCommit 이 제거를 main 에 반영.
+    await this.git.raw(['rm', '-r', '--cached', '--ignore-unmatch', '--', '.obsidian']).catch(() => undefined);
   }
 
   /** DEVICE_ID env > .git/ogs-device-id 영속값 > 신규 생성(영속화). 재시작 시 동일 identity 유지. */
@@ -169,6 +173,9 @@ export class Committer {
       await this.git.raw(['branch', '-f', 'main', 'origin/main']);
       await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
       await this.git.raw(['reset', '--mixed']); // index=origin/main, 워킹트리 보존
+      // add 전에 .gitignore 보장 — 신규 기기의 온디스크 data.json 이 adopt 커밋에 섞이지 않게.
+      // (.gitattributes 는 checkout-index 뒤 seedRepoFiles 가 원격 커스텀 존중하며 배치.)
+      ensureGitignoreRules(this.cfg.vaultPath, ['.obsidian/', '.DS_Store', 'Thumbs.db']);
       await this.git.raw(['add', '--ignore-removal', '--', '.']); // 로컬 추가/수정 stage(원격전용 삭제 안 함)
       const status = await this.git.raw(['status', '--porcelain']);
       if (status.trim()) await this.git.commit(`adopt: ${nowIso()}`);
@@ -179,20 +186,17 @@ export class Committer {
     }
   }
 
-  /** seed 파일 보장: .gitattributes(union) + .gitignore (다음 커밋에 흡수됨). 기존 파일은 존중(wx). */
+  /** seed 파일 보장: .gitattributes(union, 기존 존중 wx) + .gitignore(.obsidian/ 규칙 누락 시 append). */
   private seedRepoFiles(): void {
     const attrs = join(this.cfg.vaultPath, '.gitattributes');
-    const ignore = join(this.cfg.vaultPath, '.gitignore');
     try {
       writeFileSync(attrs, '*.md merge=union\n* text=auto eol=lf\n', { flag: 'wx' });
     } catch {
       /* 이미 있으면 존중 */
     }
-    try {
-      writeFileSync(ignore, '.obsidian/\n.DS_Store\nThumbs.db\n', { flag: 'wx' });
-    } catch {
-      /* 존중 */
-    }
+    // .gitignore 는 존중하되 .obsidian/ 규칙은 반드시 보장 — 기존 .gitignore 가 있어도 누락 시 append.
+    // (data.json 이 추적되면 팀원끼리 deviceId·설정을 서로 덮어쓴다.)
+    ensureGitignoreRules(this.cfg.vaultPath, ['.obsidian/', '.DS_Store', 'Thumbs.db']);
   }
 
   /** add -A 후 변경 없으면 skip(=이벤트 루프 구조적 종결자), 있으면 커밋. */
@@ -312,4 +316,33 @@ function sleep(ms: number): Promise<void> {
 
 function logErr(label: string) {
   return (err: unknown) => console.error(`[gitvault-live] ${label} 실패:`, err);
+}
+
+/**
+ * .gitignore 에 필수 무시 규칙을 보장한다 — 파일이 없으면 생성, 있으면 **누락 규칙만 append**(기존 규칙 보존).
+ * 규칙 비교는 주석·공백 제외 라인 단위, trailing slash 무시(`.obsidian` == `.obsidian/`).
+ * [중요] .obsidian/ 가 빠지면 plugin data.json(기기별 deviceId·토큰)이 동기화돼 팀원끼리 서로 덮어쓴다.
+ * plugin GitManager.ensureGitignoreRules 와 동일 로직 — daemon(헤드리스)도 같은 계약을 지켜야 한다.
+ */
+function ensureGitignoreRules(base: string, rules: string[]): boolean {
+  const path = join(base, '.gitignore');
+  let existing = '';
+  try {
+    existing = readFileSync(path, 'utf8');
+  } catch {
+    /* 파일 없음 → 새로 생성 */
+  }
+  const norm = (l: string): string => l.trim().replace(/\/+$/, '');
+  const have = new Set(
+    existing
+      .split(/\r?\n/)
+      .map(norm)
+      .filter((l) => l && !l.startsWith('#')),
+  );
+  const missing = rules.filter((r) => !have.has(norm(r)));
+  if (missing.length === 0) return false;
+  const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
+  const header = existing ? '\n# gitvault-live — 기기별 상태·플러그인 설정 미동기화 (자동 추가)\n' : '';
+  writeFileSync(path, existing + prefix + header + missing.join('\n') + '\n');
+  return true;
 }
