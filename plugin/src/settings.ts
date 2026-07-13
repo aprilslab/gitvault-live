@@ -267,6 +267,19 @@ export class GitSyncSettingTab extends PluginSettingTab {
       .setDesc('작업 브랜치 wip/<id> 및 커밋 작성자에 사용됩니다.')
       .addText((t) => t.setValue(s.deviceId).setDisabled(true));
 
+    new Setting(containerEl)
+      .setName('기기 ID 재설정')
+      .setDesc('동기화 오류·충돌(브랜치가 계속 바뀜, "Switched to a new branch" 등)이 나면 사용. 현재 작업을 저장한 뒤 새 ID 를 발급하고 오래된 작업 브랜치를 정리합니다.')
+      .addButton((b) =>
+        b
+          .setButtonText('기기 ID 재설정')
+          .setWarning()
+          .onClick(async () => {
+            await this.plugin.resetDeviceIdentity();
+            this.display(); // 새 ID 반영해 다시 그림
+          }),
+      );
+
     new Setting(containerEl).addButton((b) =>
       b
         .setButtonText('지금 다시 연결/동기화')

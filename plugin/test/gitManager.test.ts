@@ -410,6 +410,56 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // ── 시나리오 H: cleanupStaleWips — 오래된 wip 정리(ahead=0 삭제 / 미반영 보존 / 세션 wip 불변) ──
+    {
+      const root = mkdtempSync(join(tmpdir(), 'ogs-gm-cleanup-'));
+      const bare = initBare(root, 'r.git');
+      const vault = join(root, 'vault');
+      mkdirSync(vault);
+      const g = newManager(vault, bare, 'dev-Z');
+      await g.ensureRepo(); // main seed + 세션 wip/dev-Z fork
+      writeFileSync(join(vault, 'note.md'), 'hi\n');
+      await g.commitAndPushWip();
+      await g.squashMergeToMain(); // main 확립
+      const sessionHead = sh('git', ['-C', vault, 'symbolic-ref', '--short', 'HEAD']).trim();
+
+      // (1) main 과 동일한 오래된 wip → 삭제 대상
+      sh('git', ['-C', vault, 'branch', 'wip/old-clean/111', 'main']);
+      // (2) main 에 없는 커밋을 가진 오래된 wip → 보존 대상(wip-orphan/)
+      sh('git', ['-C', vault, 'checkout', '-q', '-b', 'wip/old-dirty/222', 'main']);
+      writeFileSync(join(vault, 'stray.md'), 'stray edit\n');
+      sh('git', ['-C', vault, 'add', '-A']);
+      sh('git', ['-C', vault, 'commit', '-qm', 'stray']);
+      sh('git', ['-C', vault, 'checkout', '-q', sessionHead]); // 세션 wip 로 복귀
+
+      const { deleted, archived } = await g.cleanupStaleWips();
+
+      assert(deleted.includes('wip/old-clean/111'), 'ahead=0 wip 삭제 목록에 포함');
+      assert(
+        sh('git', ['-C', vault, 'branch', '--list', 'wip/old-clean/111']).trim() === '',
+        'ahead=0 wip 실제 삭제됨',
+      );
+      assert(archived.includes('wip-orphan/old-dirty/222'), '미반영 wip 은 wip-orphan/ 으로 보존 목록에 포함');
+      assert(
+        sh('git', ['-C', vault, 'branch', '--list', 'wip/old-dirty/222']).trim() === '',
+        '원래 이름 wip/old-dirty/222 는 사라짐(rename)',
+      );
+      assert(
+        sh('git', ['-C', vault, 'show', 'wip-orphan/old-dirty/222:stray.md']) === 'stray edit\n',
+        '미반영 편집 내용이 wip-orphan 에 보존됨(손실 없음)',
+      );
+      assert(
+        sh('git', ['-C', vault, 'symbolic-ref', '--short', 'HEAD']).trim() === sessionHead,
+        '현재 세션 wip(HEAD)은 정리 대상에서 제외',
+      );
+      assert(
+        sh('git', ['-C', vault, 'branch', '--list', sessionHead]).trim() !== '',
+        '세션 wip 브랜치 그대로 유지',
+      );
+
+      rmSync(root, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });

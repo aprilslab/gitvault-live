@@ -102,6 +102,11 @@ export default class GitSyncPlugin extends Plugin {
       callback: () => void this.publishNow(),
     });
     this.addCommand({
+      id: 'ogs-reset-device-id',
+      name: '기기 식별자 재설정 (동기화 오류/충돌 복구)',
+      callback: () => void this.resetDeviceIdentity(),
+    });
+    this.addCommand({
       id: 'ogs-toggle-line-blame',
       name: '라인 작성자(blame) 거터 토글',
       callback: async () => {
@@ -280,6 +285,39 @@ export default class GitSyncPlugin extends Plugin {
       new Notice('로컬 daemon 을 중지·제거했습니다.');
     } catch (e) {
       new Notice('daemon 제거 실패(수동 확인 필요): ' + (e instanceof Error ? e.message.split('\n')[0] : String(e)), 8_000);
+    }
+  }
+
+  /**
+   * 기기 식별자 재설정 — 과거 .obsidian 동기화로 data.json 의 deviceId 가 팀원 값으로 덮이거나
+   * 수동 편집으로 실행중 id 와 어긋나 wip 브랜치가 충돌·churn 하는 상태를 클린 복구한다.
+   * 순서: 현재 편집 저장(main 반영) → 새 id 발급·영속 → 재초기화(fresh wip fork) →
+   * 오래된 wip 정리(미반영분은 wip-orphan/ 로 보존) → daemon 있으면 새 id 로 재설치(plist 동기화).
+   */
+  async resetDeviceIdentity(): Promise<void> {
+    const base = this.getBasePath();
+    if (!base || !this.git) {
+      new Notice('데스크톱 vault + 저장소 연결이 필요합니다.', 6_000);
+      return;
+    }
+    const oldId = this.settings.deviceId || '(빈값)';
+    try {
+      new Notice('기기 id 재설정 중… 현재 작업을 먼저 저장합니다.', 4_000);
+      await this.publishNow(); // 현재 편집 → 공식본(main). 손실 방지.
+      this.settings.deviceId = generateDeviceId(); // 새 고유 id
+      await this.saveSettings(); // data.json 영속
+      await this.applySettings(); // 새 id 로 GitManager 재구성 → fresh wip fork
+      const { deleted, archived } = this.git
+        ? await this.git.cleanupStaleWips()
+        : { deleted: [], archived: [] };
+      // daemon 이 켜져 있으면 새 id 로 재설치 — plist/env 의 DEVICE_ID 를 플러그인과 일치시켜 재발 방지.
+      if (this.settings.daemonEnabled) await this.enableDaemon();
+      const parts = [`기기 id: ${oldId} → ${this.settings.deviceId}`];
+      if (deleted.length) parts.push(`오래된 wip ${deleted.length}개 정리`);
+      if (archived.length) parts.push(`미반영 wip ${archived.length}개는 wip-orphan/* 로 보존`);
+      new Notice(parts.join('\n'), 9_000);
+    } catch (e) {
+      new Notice('기기 id 재설정 실패: ' + (e instanceof Error ? e.message.split('\n')[0] : String(e)), 9_000);
     }
   }
 

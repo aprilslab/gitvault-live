@@ -164,6 +164,36 @@ export class GitManager {
     });
   }
 
+  /**
+   * 오래된/이질(foreign) wip 브랜치 정리 — deviceId 재설정 등에서 클린 슬레이트 확보용.
+   * - 현재 HEAD(활성 세션 wip)는 절대 건드리지 않는다.
+   * - main 에 이미 반영된 wip(ahead=0)은 안전 삭제.
+   * - main 에 없는 커밋을 가진 wip 은 **삭제하지 않고** `wip-orphan/<…>` 로 rename 해 보존(손실 방지).
+   * 순수 로컬 ref 조작이라 워킹트리·원격 불변. 반환: 삭제/보존된 브랜치명.
+   */
+  cleanupStaleWips(): Promise<{ deleted: string[]; archived: string[] }> {
+    return this.queue.add(async () => {
+      const head = (await this.git.raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+      const all = (await this.git.branchLocal()).all;
+      const wips = all.filter((b) => b.startsWith('wip/') && b !== head);
+      const deleted: string[] = [];
+      const archived: string[] = [];
+      for (const wip of wips) {
+        const ahead = (await this.git.raw(['rev-list', '--count', `main..${wip}`])).trim();
+        if (ahead === '0') {
+          await this.git.raw(['branch', '-D', wip]).catch(() => undefined);
+          deleted.push(wip);
+        } else {
+          // 미반영 커밋 보존 — 파괴 금지. 이름만 wip-orphan/ 으로 옮겨 peer presence/재fork 대상에서 제외.
+          const orphan = wip.replace(/^wip\//, 'wip-orphan/');
+          await this.git.raw(['branch', '-m', wip, orphan]).catch(() => undefined);
+          archived.push(orphan);
+        }
+      }
+      return { deleted, archived };
+    });
+  }
+
   /** 두 트리 사이 변경 파일 목록 (`git diff --name-status a b`). Phase C 패널/데코레이션용. */
   changedFiles(a: string, b: string): Promise<Array<{ status: string; path: string }>> {
     return this.queue.add(async () => {
