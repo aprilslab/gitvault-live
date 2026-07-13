@@ -106,19 +106,43 @@ export class GitManager {
 
   /** repo 보장: init/clone, identity·quotePath 설정, remote 갱신, main 정렬(adopt/seed) + 자기 wip 정리. */
   ensureRepo(): Promise<void> {
-    return this.queue.add(() => this.ensureRepoLocked());
+    return this.queue.add(async () => {
+      try {
+        await this.ensureRepoLocked();
+      } catch (e) {
+        // 경합/깨진 상태 추정 — 무손실 복구로 깨끗한 wip 확보. 복구도 실패하면 진짜 오류로 전파.
+        this.log(`ensureRepo 실패 → 복구 시도: ${redact(e)}`);
+        await this.recoverToCleanWip();
+      }
+    });
   }
 
   /** 세션 wip(`wip/<device>/<ts>`, ensureRepo·finishToMain 에서 eager fork)로 커밋·푸시 (직렬화). */
   commitAndPushWip(): Promise<'pushed' | 'nochange'> {
     return this.queue.add(async () => {
-      const committed = await this.flushCommit();
-      // [CRITICAL] pushWip 는 새 커밋이 있을 때만 — eager fork 후 편집 없으면 wip 은 origin/main sha 를 가리키므로
-      // 무조건 push 하면 매 AutoSync 이벤트마다 원격에 빈 wip ref (origin/main sha 지목) 를 만든다. 저장/재시작 때
-      // 정리되긴 해도 세션 중 원격 노이즈 낭비. lazy-fork 시절엔 currentWip===null 로 pushWip 가 자연스레 skip 됐다.
-      if (committed) await this.pushWip();
-      return committed ? 'pushed' : 'nochange';
+      try {
+        return await this.commitAndPushWipOnce();
+      } catch (e) {
+        // 경합(daemon 동시 op)로 checkout/commit 이 깨진 경우 — 무손실 복구 후 1회 재시도.
+        this.log(`commitAndPushWip 실패 → 복구 후 재시도: ${redact(e)}`);
+        await this.recoverToCleanWip();
+        return await this.commitAndPushWipOnce();
+      }
     });
+  }
+
+  /** 수동/폴백 세션 복구 — 깨진 브랜치·인덱스·mid-merge 상태를 무손실로 정리하고 깨끗한 wip 확보(직렬화). */
+  recoverSession(): Promise<void> {
+    return this.queue.add(() => this.recoverToCleanWip());
+  }
+
+  private async commitAndPushWipOnce(): Promise<'pushed' | 'nochange'> {
+    const committed = await this.flushCommit();
+    // [CRITICAL] pushWip 는 새 커밋이 있을 때만 — eager fork 후 편집 없으면 wip 은 origin/main sha 를 가리키므로
+    // 무조건 push 하면 매 AutoSync 이벤트마다 원격에 빈 wip ref (origin/main sha 지목) 를 만든다. 저장/재시작 때
+    // 정리되긴 해도 세션 중 원격 노이즈 낭비. lazy-fork 시절엔 currentWip===null 로 pushWip 가 자연스레 skip 됐다.
+    if (committed) await this.pushWip();
+    return committed ? 'pushed' : 'nochange';
   }
 
   /**
@@ -534,7 +558,52 @@ export class GitManager {
   private async forkSessionWip(): Promise<void> {
     this.currentWip = this.newWipRef();
     this.wipPushed = false;
-    await this.git.raw(['checkout', '-b', this.currentWip]);
+    await this.git.raw(['checkout', '-q', '-b', this.currentWip]); // -q: 성공 stderr("Switched to a new branch") 억제
+  }
+
+  /**
+   * 경합(daemon 과 동시 git op)·중단으로 브랜치/인덱스가 깨진 상태에서도 **무손실**로 깨끗한 세션 wip 을 확보한다.
+   * 공개 진입점(ensureRepo·commitAndPushWip)의 실패 폴백 — 한 번 호출 후 재시도하면 대개 정상화된다.
+   *
+   * 순서: flush → mid-merge abort → 편집을 stash -u 로 격리 → main 으로 hard-reset(깨진 상태 청소)
+   *       → fresh wip fork → stash pop(.md 는 .gitattributes union 자동 병합).
+   * [안전불변] `reset --hard` 는 **변경이 없거나 stash 가 실제로 생성된 경우에만** 실행한다 —
+   *           stash 실패 시 워킹트리 편집을 절대 파괴하지 않고 비파괴 경로(symbolic-ref+reset --mixed)로 폴백.
+   */
+  private async recoverToCleanWip(): Promise<void> {
+    await this.flushEditors();
+    await this.git.raw(['merge', '--abort']).catch(() => undefined); // 진행중 merge 있으면 청소(없으면 no-op)
+    const dirty = (await this.git.raw(['status', '--porcelain'])).trim().length > 0;
+    let stashed = false;
+    if (dirty) {
+      const tag = `ogs-recover-${this.deviceId}`;
+      await this.git.raw(['stash', 'push', '--include-untracked', '-m', tag]).catch(() => undefined);
+      stashed = (await this.git.raw(['stash', 'list']).catch(() => '')).includes(tag);
+    }
+    const base = (await this.refExists('refs/remotes/origin/main'))
+      ? 'origin/main'
+      : (await this.refExists('refs/heads/main'))
+        ? 'main'
+        : null;
+    await this.git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']).catch(() => undefined);
+    if (base) {
+      if (!dirty || stashed) {
+        // 안전: 워킹트리가 깨끗하거나 편집이 stash 에 안전히 보관됨 → hard-reset 로 깨진 상태 완전 청소.
+        await this.git.raw(['reset', '--hard', base]).catch(() => undefined);
+      } else {
+        // stash 실패 + dirty → 편집 파괴 금지. 비파괴로만 정렬(워킹트리 보존).
+        await this.git.raw(['reset', '--mixed', base]).catch(() => undefined);
+      }
+    }
+    await this.forkSessionWip(); // main 위 fresh wip
+    if (stashed) {
+      // 편집 재적용. .md 충돌은 union 으로 자동 병합. 그 외 충돌은 우리(stash) 편집 우선 유지.
+      await this.git.raw(['stash', 'pop']).catch(async () => {
+        await this.git.raw(['checkout', '--theirs', '--', '.']).catch(() => undefined);
+        await this.git.add(['-A']).catch(() => undefined);
+        await this.git.raw(['stash', 'drop']).catch(() => undefined);
+      });
+    }
   }
 
   /** 기존 .gitattributes 에 union 드라이버가 없으면 경고만(공유 설정 파일이라 내용 변조는 안 함). */
@@ -574,7 +643,7 @@ export class GitManager {
     if (this.currentWip === null || head === 'main' || head === '') {
       this.currentWip = this.newWipRef();
       this.wipPushed = false; // 새 wip — 아직 원격에 없음
-      await this.git.raw(['checkout', '-b', this.currentWip]);
+      await this.git.raw(['checkout', '-q', '-b', this.currentWip]);
     }
     await this.git.commit(`${this.deviceId}: ${nowIso()}`);
     return true;

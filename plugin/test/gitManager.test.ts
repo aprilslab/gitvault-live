@@ -460,6 +460,56 @@ async function main(): Promise<void> {
       rmSync(root, { recursive: true, force: true });
     }
 
+    // ── 시나리오 I: recoverSession — mid-merge 충돌 + 미저장 편집에서 무손실 복구 ──
+    {
+      const root2 = mkdtempSync(join(tmpdir(), 'ogs-gm-recover-'));
+      const bareR = initBare(root2, 'r.git');
+      const vaultR = join(root2, 'vault');
+      mkdirSync(vaultR);
+      const g = newManager(vaultR, bareR, 'dev-R');
+      await g.ensureRepo(); // main seed + wip fork
+      writeFileSync(join(vaultR, 'data.txt'), 'base\n'); // non-md → union 아님(충돌 유발용)
+      writeFileSync(join(vaultR, 'note.md'), 'v1\n');
+      await g.commitAndPushWip();
+      await g.squashMergeToMain(); // main = {data.txt:base, note.md:v1}
+
+      // 외부가 origin/main:data.txt 변경 push → 로컬 편집과 충돌 재료
+      pushToMain(root2, bareR, { 'data.txt': 'ext\n' });
+      writeFileSync(join(vaultR, 'data.txt'), 'local\n');
+      await g.commitAndPushWip();
+
+      // mid-merge 충돌 상태 강제 생성(비-md 라 union 아님 → 미해소 충돌)
+      sh('git', ['-C', vaultR, 'fetch', '-q', 'origin']);
+      let mergeThrew = false;
+      try {
+        sh('git', ['-C', vaultR, 'merge', '--no-edit', 'origin/main']);
+      } catch {
+        mergeThrew = true;
+      }
+      assert(mergeThrew, 'I 사전조건: origin/main merge 가 data.txt 충돌로 실패(mid-merge)');
+      assert(existsSync(join(vaultR, '.git', 'MERGE_HEAD')), 'I 사전조건: MERGE_HEAD 존재');
+
+      // 미저장 유저 편집(untracked) — 복구 후 반드시 보존돼야 함
+      writeFileSync(join(vaultR, 'user.md'), 'important user edit\n');
+
+      await g.recoverSession(); // 무손실 복구
+
+      assert(!existsSync(join(vaultR, '.git', 'MERGE_HEAD')), 'I: mid-merge 정리됨(MERGE_HEAD 없음)');
+      const headR = sh('git', ['-C', vaultR, 'symbolic-ref', '--short', 'HEAD']).trim();
+      assert(/^wip\/dev-R\/\d+$/.test(headR), `I: 깨끗한 세션 wip 로 복귀 (got ${headR})`);
+      assert(
+        existsSync(join(vaultR, 'user.md')) &&
+          readFileSync(join(vaultR, 'user.md'), 'utf8') === 'important user edit\n',
+        'I: 미저장 유저 편집 무손실 보존(stash 왕복)',
+      );
+      assert(
+        sh('git', ['-C', vaultR, 'diff', '--name-only', '--diff-filter=U']).trim() === '',
+        'I: 잔여 충돌(unmerged) 없음',
+      );
+
+      rmSync(root2, { recursive: true, force: true });
+    }
+
     console.log('GITMANAGER OK');
   } finally {
     rmSync(root, { recursive: true, force: true });
