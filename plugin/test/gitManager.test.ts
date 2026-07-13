@@ -5,7 +5,7 @@
  * - 기존 원격 .gitattributes 내용 존중 (변조 없음)
  * 실행: npm run test:git -w plugin
  */
-import { GitManager } from '../src/git/GitManager';
+import { GitManager, isNetworkError } from '../src/git/GitManager';
 import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -508,6 +508,19 @@ async function main(): Promise<void> {
       );
 
       rmSync(root2, { recursive: true, force: true });
+    }
+
+    // ── 시나리오 J: isNetworkError — 오프라인은 true, 상태손상은 false(복구 유발 금지) ──
+    {
+      assert(
+        isNetworkError(new Error("fatal: unable to access 'https://github.com/x.git/': Could not resolve host: github.com")),
+        'J: Could not resolve host → 네트워크 에러',
+      );
+      assert(isNetworkError(new Error('fatal: Connection refused')), 'J: Connection refused → 네트워크 에러');
+      assert(isNetworkError(new Error('Failed to connect to github.com port 443: Operation timed out')), 'J: timed out → 네트워크 에러');
+      assert(!isNetworkError(new Error("fatal: A branch named 'wip/x' already exists")), 'J: 브랜치 충돌 → 네트워크 아님');
+      assert(!isNetworkError(new Error("Switched to a new branch 'wip/x'")), 'J: switched branch → 네트워크 아님');
+      assert(!isNetworkError(new Error('Unable to create .git/index.lock: File exists')), 'J: index.lock → 네트워크 아님(경합=복구 대상)');
     }
 
     console.log('GITMANAGER OK');

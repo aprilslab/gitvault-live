@@ -110,6 +110,8 @@ export class GitManager {
       try {
         await this.ensureRepoLocked();
       } catch (e) {
+        // 네트워크/오프라인은 일시적 — 복구(파괴적) 대상 아님. 그대로 전파해 다음 사이클 재시도.
+        if (isNetworkError(e)) throw e;
         // 경합/깨진 상태 추정 — 무손실 복구로 깨끗한 wip 확보. 복구도 실패하면 진짜 오류로 전파.
         this.log(`ensureRepo 실패 → 복구 시도: ${redact(e)}`);
         await this.recoverToCleanWip();
@@ -123,6 +125,8 @@ export class GitManager {
       try {
         return await this.commitAndPushWipOnce();
       } catch (e) {
+        // 네트워크/오프라인은 일시적 — 복구 안 하고 전파(다음 사이클 재시도). push 실패 등이 stash/reset 유발 금지.
+        if (isNetworkError(e)) throw e;
         // 경합(daemon 동시 op)로 checkout/commit 이 깨진 경우 — 무손실 복구 후 1회 재시도.
         this.log(`commitAndPushWip 실패 → 복구 후 재시도: ${redact(e)}`);
         await this.recoverToCleanWip();
@@ -786,6 +790,17 @@ function sleep(ms: number): Promise<void> {
 function redact(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.replace(/\/\/[^/@\s]+@/g, '//***@');
+}
+
+/**
+ * 네트워크/오프라인 에러인가 — 원격 접근 실패는 **일시적**이라 상태 손상이 아니다.
+ * 이런 에러엔 파괴적 recoverToCleanWip 를 돌리면 안 되고(불필요한 stash/reset), 다음 사이클에 재시도하면 된다.
+ */
+export function isNetworkError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /could not resolve host|unable to access|couldn'?t connect|connection (refused|reset|timed out)|network is unreachable|operation timed out|timed out|failed to connect|could not read from remote|remote end hung up|ssl|proxy/i.test(
+    m,
+  );
 }
 
 function parseNameStatusZ(z: string): Array<{ status: string; path: string }> {

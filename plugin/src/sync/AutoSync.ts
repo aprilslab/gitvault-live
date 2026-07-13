@@ -1,5 +1,5 @@
 import { App, EventRef, TAbstractFile } from 'obsidian';
-import { GitManager } from '../git/GitManager';
+import { GitManager, isNetworkError } from '../git/GitManager';
 import type { SyncState } from '../ui/StatusBar';
 
 const IDLE_MERGE_MS = 5_000; // 이 시간 이상 타이핑이 없어야 워킹트리 merge(에디터 리로드) 수행
@@ -73,7 +73,7 @@ export class AutoSync {
       this.opts.onState('synced');
       this.opts.onSynced?.(); // 커밋 후 패널·데코·"저장 대기 N" 갱신
     } catch (e) {
-      this.opts.onState('error', short(e));
+      this.reportFailure(e);
     }
   }
 
@@ -94,8 +94,14 @@ export class AutoSync {
       this.opts.onSynced?.();
       this.opts.onState('synced');
     } catch (e) {
-      this.opts.onState('error', short(e));
+      this.reportFailure(e);
     }
+  }
+
+  /** 네트워크/오프라인은 빨간 '오류' 대신 '오프라인'(대기)으로 — 연결되면 자동 재개된다. 그 외는 실제 오류. */
+  private reportFailure(e: unknown): void {
+    if (isNetworkError(e)) this.opts.onState('pending', '오프라인');
+    else this.opts.onState('error', short(e));
   }
 }
 

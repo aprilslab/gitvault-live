@@ -10,7 +10,7 @@ import {
   buildAuthedRemote,
   detectDisplayName,
 } from './settings';
-import { GitManager } from './git/GitManager';
+import { GitManager, isNetworkError } from './git/GitManager';
 import { AutoSync } from './sync/AutoSync';
 import { Heartbeat } from './sync/Heartbeat';
 import { StatusBar, outgoingSummary, statusLabel } from './ui/StatusBar';
@@ -207,6 +207,10 @@ export default class GitSyncPlugin extends Plugin {
       await this.git.ensureRepo();
       this.statusBar?.set('synced');
     } catch (e) {
+      if (isNetworkError(e)) {
+        this.statusBar?.set('pending', '오프라인'); // 오프라인 — 연결되면 다음 사이클에 자동 재개
+        return;
+      }
       this.statusBar?.set('error', e instanceof Error ? e.message.split('\n')[0] : String(e));
       return;
     }
