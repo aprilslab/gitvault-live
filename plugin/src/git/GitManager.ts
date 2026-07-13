@@ -89,6 +89,11 @@ export class GitManager {
 
   constructor(private readonly opts: GitManagerOptions) {
     this.git = simpleGit(opts.basePath, { timeout: { block: GIT_BLOCK_TIMEOUT_MS } });
+    // [중요] Obsidian(Electron)은 GUI 앱이라 최소 PATH 로 실행돼 /opt/homebrew/bin·/usr/local/bin 이 빠진다
+    // → 거기 설치된 git-lfs 를 못 찾아, LFS repo 의 checkout 훅·clean/smudge 필터가 매번 exit 2 로 실패한다
+    // (실제 sue 회귀: 'git-lfs was not found on your path'). git child process 의 PATH 를 보강해 해결.
+    // 터미널·launchd 데몬은 이미 해당 경로가 있어 무영향.
+    this.git.env({ ...process.env, PATH: enrichedGitPath() });
     this.deviceId = opts.deviceId;
     this.displayName = opts.displayName?.trim() || opts.deviceId;
     this.flushEditors = opts.flushEditors ?? (async () => undefined);
@@ -774,6 +779,16 @@ function sleep(ms: number): Promise<void> {
 function redact(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.replace(/\/\/[^/@\s]+@/g, '//***@');
+}
+
+/**
+ * git child process 에 넘길 보강된 PATH. Electron(Obsidian) GUI 앱의 최소 PATH 에서 빠지는
+ * 표준 도구 경로(brew 등)를 앞에 붙여 git-lfs 같은 훅/필터 도구를 찾게 한다. 기존 PATH 는 뒤에 보존(중복 제거).
+ */
+function enrichedGitPath(): string {
+  const extra = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
+  const cur = (process.env.PATH || '').split(':').filter(Boolean);
+  return [...extra, ...cur.filter((p) => !extra.includes(p))].join(':');
 }
 
 /**
