@@ -18,7 +18,8 @@ param(
   [string]$Token,
   [string]$Device,
   [string]$Name,
-  [string]$Repo = "https://github.com/aprilslab/gitvault-live.git"
+  [string]$Repo = "https://github.com/aprilslab/gitvault-live.git",
+  [switch]$Purge   # 재설치 시 data.json(기기 설정·토큰)까지 완전 삭제 = fresh
 )
 $ErrorActionPreference = "Stop"
 function Die($m){ Write-Error "✗ $m"; exit 1 }
@@ -55,6 +56,20 @@ npm run build --silent
 if ($Mode -eq 'plugin') {
   if (-not (Test-Path (Join-Path $Vault ".obsidian"))) { Die "vault 에 .obsidian 없음: $Vault (Obsidian 으로 한 번 연 폴더인지 확인)" }
   $Dest = Join-Path $Vault ".obsidian\plugins\gitvault-live"
+  # 재설치: 기존 설치를 통째로 비워 오래된/orphan 파일 제거. 단 data.json(기기 deviceId·토큰)은
+  # 기본 보존 — 지우면 기기 식별자가 바뀌어 wip 브랜치·커밋 주체가 흔들린다. -Purge 면 그것도 삭제(fresh).
+  if (Test-Path $Dest) {
+    $keep = $null
+    $dataJson = Join-Path $Dest "data.json"
+    if ((Test-Path $dataJson) -and (-not $Purge)) {
+      $keep = [IO.Path]::GetTempFileName()
+      Copy-Item $dataJson $keep -Force
+    }
+    Remove-Item -Recurse -Force $Dest
+    Info ("기존 설치 정리(재설치)" + $(if ($keep) { " — data.json 보존" } elseif ($Purge) { " — -Purge: data.json 삭제" } else { "" }))
+    New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+    if ($keep) { Copy-Item $keep $dataJson -Force; Remove-Item $keep -Force }
+  }
   New-Item -ItemType Directory -Force -Path $Dest | Out-Null
   Copy-Item plugin\main.js, plugin\manifest.json, plugin\styles.css $Dest -Force
   Write-Host "✓ 플러그인 설치됨: $Dest"
@@ -77,6 +92,11 @@ if (-not $RemoteEff) {
   else { Info "기존 origin 재사용 (토큰 미삽입 — git credential 사용)" }
 }
 Info "인스턴스: $Name (device=$Device, vault=$Vault)"
+
+# 재설치: 실행 중이던 옛 인스턴스 정지(옛 daemon.js 를 물고 있는 프로세스 제거 → 깨끗한 재등록).
+# schtasks /Create /F 는 작업 '정의'만 덮어쓰고 실행 중 프로세스는 안 죽인다.
+# (작업이 없을 때 schtasks 가 stderr 를 내도 무시 — 멱등)
+try { schtasks /End /TN "gitvault-live-$Name" 2>$null | Out-Null } catch {}
 
 $Base = "C:\gitvault-live"
 New-Item -ItemType Directory -Force -Path $Base | Out-Null
