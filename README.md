@@ -85,6 +85,19 @@ curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → git
 curl -fsSL .../install.sh | bash -s -- daemon --vault ~/notes --name notes  # → gitvault-live@notes
 ```
 
+### 제거 (uninstall)
+
+`uninstall.sh` 한 줄. **vault 노트·`.git` 은 건드리지 않고**, `.obsidian/plugins/gitvault-live/` 폴더와 해당 vault 용 백그라운드 데몬(launchd/systemd)만 지운다(data.json 포함).
+
+```bash
+# 플러그인 + 그 vault 의 자동설치 데몬 제거
+curl -fsSL https://raw.githubusercontent.com/aprilslab/gitvault-live/main/uninstall.sh | bash -s -- plugin --vault ~/vault
+
+# 서버 daemon 인스턴스 제거 (install 시 쓴 이름/폴더명)
+curl -fsSL .../uninstall.sh | bash -s -- daemon --name wiki      # 또는 --vault ~/wiki
+```
+로컬 clone 에서는 `./uninstall.sh plugin --vault <vault>`. (공유 `/opt/gitvault-live` 는 남은 인스턴스가 없을 때만 수동 제거하라고 안내됨.)
+
 ### 인증 — 토큰이 언제 필요한가
 
 git push/pull 은 자격증명이 필요하다. **누가·어디서 돌리느냐**로 갈린다.
