@@ -19,7 +19,7 @@ set -euo pipefail
 
 REPO_URL_DEFAULT="https://github.com/aprilslab/gitvault-live.git"
 MODE="${1:-}"; shift || true
-VAULT=""; REMOTE=""; TOKEN=""; DEVICE=""; NAME=""; SRC_REPO="$REPO_URL_DEFAULT"
+VAULT=""; REMOTE=""; TOKEN=""; DEVICE=""; NAME=""; SRC_REPO="$REPO_URL_DEFAULT"; PURGE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
     --device) DEVICE="${2:-}"; shift 2 ;;
     --name)   NAME="${2:-}"; shift 2 ;;
     --repo)   SRC_REPO="${2:-}"; shift 2 ;;
+    --purge)  PURGE=1; shift ;;   # 재설치 시 data.json(기기 설정·토큰)까지 완전 삭제 = fresh
     *) echo "알 수 없는 플래그: $1" >&2; exit 1 ;;
   esac
 done
@@ -65,6 +66,18 @@ npm run build --silent
 if [ "$MODE" = "plugin" ]; then
   DEST="$VAULT/.obsidian/plugins/gitvault-live"
   [ -d "$VAULT/.obsidian" ] || die "vault 에 .obsidian 없음: $VAULT (Obsidian 으로 한 번 연 폴더인지 확인)"
+  # ── 재설치: 기존 설치를 깨끗이 비운다(오래된/orphan 파일 제거). 단 data.json(기기 deviceId·토큰)은
+  #    기본 보존 — 지우면 기기 식별자가 바뀌어 wip 브랜치/커밋 주체가 흔들린다. --purge 면 그것도 삭제(fresh).
+  if [ -d "$DEST" ]; then
+    KEEP=""
+    if [ -f "$DEST/data.json" ] && [ -z "$PURGE" ]; then
+      KEEP="$(mktemp)"; cp "$DEST/data.json" "$KEEP"
+    fi
+    rm -rf "$DEST"
+    info "기존 설치 정리(재설치)$([ -n "$KEEP" ] && echo ' — data.json 보존' || { [ -n "$PURGE" ] && echo ' — --purge: data.json 삭제'; })"
+    mkdir -p "$DEST"
+    [ -n "$KEEP" ] && { cp "$KEEP" "$DEST/data.json"; rm -f "$KEEP"; }
+  fi
   mkdir -p "$DEST"
   cp plugin/main.js plugin/manifest.json plugin/styles.css "$DEST/"
   # 번들된 daemon.js 동봉 — 플러그인 설정에서 sudo 없이 로컬 daemon 자동/수동 설치에 사용.
@@ -95,6 +108,14 @@ if [ -z "$REMOTE_EFF" ]; then
   fi
 fi
 info "인스턴스: $NAME (device=$DEVICE, vault=$VAULT)"
+
+# ── 재설치: 기존 인스턴스가 실행 중이면 먼저 정지(옛 daemon.js 를 물고 있는 프로세스 제거 → 깨끗한 재등록).
+#    systemd 는 enable --now 가 실행 중 서비스를 재시작하지 않아, 정지 안 하면 옛 코드가 계속 돈다.
+if [ "$OS" = "Linux" ] && have systemctl; then
+  sudo systemctl disable --now "gitvault-live@$NAME" 2>/dev/null || true
+elif [ "$OS" = "Darwin" ]; then
+  launchctl unload "$HOME/Library/LaunchAgents/com.gitvault-live.$NAME.plist" 2>/dev/null || true
+fi
 
 sudo mkdir -p /opt/gitvault-live /etc/gitvault-live
 sudo cp daemon/dist/index.js /opt/gitvault-live/daemon.js

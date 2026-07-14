@@ -79,6 +79,8 @@ curl -fsSL https://raw.githubusercontent.com/aprilslab/gitvault-live/main/instal
 
 설치 후 플러그인은 Obsidian 설정에서 repo URL+토큰 입력 → [연결 테스트]. daemon 은 바로 상주 시작.
 
+> **재설치는 깨끗하게 덮어쓴다.** 이미 설치된 상태에서 같은 명령을 다시 실행하면 기존 설치를 먼저 비운 뒤(오래된/orphan 파일 제거) 새로 설치한다 — daemon 은 옛 프로세스를 정지하고 재등록. 플러그인의 `data.json`(기기 deviceId·토큰)은 **보존**한다(지우면 기기 식별자가 바뀜). 설정까지 완전 초기화하려면 `--purge` 를 붙인다.
+
 daemon 서비스는 **vault 이름별 인스턴스**로 등록된다(기본 = vault 폴더명). 한 머신에서 vault 여러 개를 각각 돌리려면 그대로 여러 번 실행하거나 `--name`/`-Name` 으로 이름을 지정:
 ```bash
 curl -fsSL .../install.sh | bash -s -- daemon --vault ~/wiki           # → gitvault-live@wiki
