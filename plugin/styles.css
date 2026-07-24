@@ -80,7 +80,9 @@
   position: fixed;
   bottom: 32px;
   right: 24px;
-  z-index: 100;
+  /* Obsidian 툴팁(--layer-tooltip:70)·메뉴(--layer-menu:65) 아래로 둔다 —
+     안 그러면 배지가 자기 aria-label 툴팁(미저장 파일 목록)과 클릭 메뉴를 뒤에서 가린다. */
+  z-index: 45;
   padding: 6px 14px;
   border-radius: 16px;
   background: var(--interactive-accent);
